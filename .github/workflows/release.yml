@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Verify and publish GitHub release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the tag matches the podspec version
+        run: |
+          VERSION=$(sed -nE "s/^ *s\.version *= *'([^']+)'.*/\1/p" ConsentIQ.podspec)
+          if [ -z "$VERSION" ]; then
+            echo "Could not read s.version from ConsentIQ.podspec" >&2
+            exit 1
+          fi
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match ConsentIQ.podspec version $VERSION" >&2
+            exit 1
+          fi
+          echo "Releasing $VERSION"
+
+      - name: Pick a simulator
+        id: simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices[][] | select(.isAvailable) | select(.name | startswith("iPhone"))][0].udid')
+          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
+            echo "No iPhone simulator available" >&2
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve package dependencies
+        run: xcodebuild -resolvePackageDependencies -scheme ConsentIQ
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme ConsentIQ \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath .build/DerivedData \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme ConsentIQ \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath .build/DerivedData
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (iOS Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+
+      - name: Pick a simulator
+        id: simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices[][] | select(.isAvailable) | select(.name | startswith("iPhone"))][0].udid')
+          NAME=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices[][] | select(.isAvailable) | select(.name | startswith("iPhone"))][0].name')
+          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
+            echo "No iPhone simulator available" >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using $NAME ($UDID)"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve package dependencies
+        run: xcodebuild -resolvePackageDependencies -scheme ConsentIQ
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme ConsentIQ \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath .build/DerivedData \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme ConsentIQ \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath .build/DerivedData \
+            -resultBundlePath .build/TestResults.xcresult
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults.xcresult
+          path: .build/TestResults.xcresult
+
+  lint:
+    name: SwiftLint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Lint
+        run: swiftlint lint --strict --reporter github-actions-logging
