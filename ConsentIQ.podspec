@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'ConsentIQ'
-  s.version          = '1.0.1'
+  s.version          = '1.1.0'
   s.summary          = 'ConsentIQ consent management SDK for iOS.'
   s.description      = <<-DESC
     Fetches a ConsentIQ property's configuration, shows a consent sheet on first launch,
@@ -15,5 +15,5 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = '16.0'
   s.swift_versions   = ['5.9']
   s.source_files     = 'Sources/ConsentIQ/**/*.swift'
-  s.frameworks       = 'Foundation', 'SwiftUI', 'UIKit', 'Combine'
+  s.frameworks       = 'Foundation', 'SwiftUI', 'UIKit', 'Combine', 'WebKit'
 end

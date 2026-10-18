@@ -4,6 +4,7 @@ import Foundation
 enum Fixtures {
     static let propertyKey = "pk_test_property"
     static let apiURL = URL(string: "https://consent.example.test")!
+    static let turnstileSiteKey = "1x00000000000000000000AA"
 
     static let configPath = "/api/public/config/\(propertyKey)"
     static let consentPath = "/api/public/consent"
@@ -14,11 +15,13 @@ enum Fixtures {
 
     static func configJSON(
         requireCaptcha: Bool = false,
+        turnstileSiteKey: String? = nil,
         defaultLanguage: String? = "en",
         resolvedRegulation: String? = "DPDPA"
     ) -> String {
         let language = defaultLanguage.map { "\"\($0)\"" } ?? "null"
         let regulation = resolvedRegulation.map { "\"\($0)\"" } ?? "null"
+        let siteKey = turnstileSiteKey.map { "\"\($0)\"" } ?? "null"
         return """
         {
           "property": {
@@ -50,7 +53,7 @@ enum Fixtures {
           ],
           "privacyNoticeUrl": "/api/public/privacy/\(propertyKey)",
           "requireCaptcha": \(requireCaptcha),
-          "turnstileSiteKey": null,
+          "turnstileSiteKey": \(siteKey),
           "autoBlock": false,
           "translations": {
             "en": {
@@ -91,6 +94,8 @@ enum Fixtures {
       }
     }
     """
+
+    static let captchaConfigJSON = configJSON(requireCaptcha: true, turnstileSiteKey: turnstileSiteKey)
 
     static let noConsentJSON = #"{"consent":null}"#
     static let expiredConsentJSON = #"{"consent":null,"expired":true}"#

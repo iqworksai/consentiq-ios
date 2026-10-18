@@ -12,14 +12,14 @@ Requires iOS 16.0 or later and Swift 5.9 or later.
 ### Swift Package Manager
 
 In Xcode choose File > Add Package Dependencies, enter
-`https://github.com/iqworksai/consentiq-ios`, and pick "Up to Next Major Version" from `1.0.1`.
+`https://github.com/iqworksai/consentiq-ios`, and pick "Up to Next Major Version" from `1.1.0`.
 Add the `ConsentIQ` library to your app target.
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/iqworksai/consentiq-ios", from: "1.0.1"),
+    .package(url: "https://github.com/iqworksai/consentiq-ios", from: "1.1.0"),
 ],
 targets: [
     .target(name: "YourApp", dependencies: [
@@ -31,7 +31,7 @@ targets: [
 A `ConsentIQ.podspec` is included for teams that vendor pods from git:
 
 ```ruby
-pod 'ConsentIQ', :git => 'https://github.com/iqworksai/consentiq-ios.git', :tag => 'v1.0.1'
+pod 'ConsentIQ', :git => 'https://github.com/iqworksai/consentiq-ios.git', :tag => 'v1.1.0'
 ```
 
 ## Quick start (SwiftUI)
@@ -183,15 +183,17 @@ All callbacks are optional fields on `ConsentIQConfig` and run on the main actor
 
 ## Limitations
 
-**Captcha.** If "Require captcha" is turned on for the property, every consent submission from
-this SDK is refused with HTTP 400, because Cloudflare Turnstile has no native mobile SDK. The SDK
-logs this once at startup:
+**Captcha.** If "Require CAPTCHA" is turned on for the property, the SDK runs Cloudflare
+Turnstile invisibly before each submission, in a hidden web view that loads from
+consent.iqworks.ai and challenges.cloudflare.com. Nothing is loaded until the first submission
+that needs it. If the check fails, times out, or needs the visitor to interact, the submission is
+not sent, local state is kept (`FormConsent.submit()` returns `nil`), and the SDK logs:
 
 ```
-[ConsentIQ] This property requires a captcha, which mobile SDKs cannot satisfy. Turn off "Require captcha" for this property in the ConsentIQ dashboard.
+[ConsentIQ] Captcha check failed; consent not submitted
 ```
 
-Turn the setting off for your iOS property.
+With the setting on, list Cloudflare Turnstile in your app's privacy disclosures.
 
 **Geo.** The applicable regulation is resolved on the server from the request's network location.
 The SDK does not send device location.

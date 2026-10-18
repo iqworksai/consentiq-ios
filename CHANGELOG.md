@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0
+
+- Properties with "Require CAPTCHA" turned on now work. Before each submission the SDK gets a fresh
+  Cloudflare Turnstile token in a hidden web view and sends it with the consent. The web view
+  loads only when a submission first needs a token.
+- If the captcha check fails, times out, or needs visitor interaction, nothing is sent: local
+  state is kept, `FormConsent.submit()` returns `nil`, and a warning is logged.
+- `ConsentSubmission` has a new optional `captchaToken`.
+- The startup warning that mobile SDKs cannot satisfy a captcha is no longer logged on iOS.
+- The podspec links WebKit.
+
 ## 1.0.1
 
 - Debug log lines are logged with private privacy, so the device log redacts them unless a

@@ -3,14 +3,21 @@ import XCTest
 
 @MainActor
 final class FormConsentTests: XCTestCase {
+    private var captcha: FakeCaptchaProvider!
+    private var logLines: [String] = []
+
     override func setUp() {
         super.setUp()
         StubURLProtocol.reset()
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.configJSON()))
+        captcha = FakeCaptchaProvider()
+        logLines = []
     }
 
     private func makeForm(
         subjectId: String = "user-1",
         channels: [String] = FormConsent.defaultChannels,
+        consentIQ: ConsentIQ? = nil,
         onSubmitted: ((FormConsentResult) -> Void)? = nil,
         onChange: ((MarketingConsentState) -> Void)? = nil
     ) -> FormConsent {
@@ -18,11 +25,28 @@ final class FormConsentTests: XCTestCase {
             propertyKey: Fixtures.propertyKey,
             apiURL: Fixtures.apiURL,
             subjectId: subjectId,
+            subjectType: .user,
             channels: channels,
             session: URLSession(configuration: StubURLProtocol.sessionConfiguration),
+            debug: true,
             onConsentSubmitted: onSubmitted,
-            onConsentChange: onChange
+            onConsentChange: onChange,
+            consentIQ: consentIQ,
+            captchaProviderFactory: captcha.factory(),
+            logSink: { [weak self] line in self?.logLines.append(line) }
         )
+    }
+
+    private func stubSubmit() {
+        StubURLProtocol.stub("POST", Fixtures.consentPath, StubResponse(json: Fixtures.submitResultJSON))
+    }
+
+    private var posts: [RecordedRequest] {
+        StubURLProtocol.requests(matching: "POST", Fixtures.consentPath)
+    }
+
+    private var configFetches: Int {
+        StubURLProtocol.requests(matching: "GET", Fixtures.configPath).count
     }
 
     func testDefaultsToFourChannelsOff() {
@@ -77,7 +101,8 @@ final class FormConsentTests: XCTestCase {
         XCTAssertTrue(StubURLProtocol.requests.isEmpty)
     }
 
-    func testSubmitFailureReturnsNil() async {
+    func testSubmitFailureReturnsNil() async throws {
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.captchaConfigJSON))
         let refused = StubResponse(status: 400, json: #"{"error":"Captcha verification failed. Please try again."}"#)
         StubURLProtocol.stub("POST", Fixtures.consentPath, refused)
         var submitted = 0
@@ -88,6 +113,89 @@ final class FormConsentTests: XCTestCase {
         XCTAssertNil(result)
         XCTAssertEqual(submitted, 0)
         XCTAssertFalse(form.isSubmitting)
+        let body = try XCTUnwrap(posts.first?.json)
+        XCTAssertEqual(body["captchaToken"] as? String, "tok")
+    }
+
+    func testCaptchaTokenIsSentAndConfigIsFetchedOnce() async throws {
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.captchaConfigJSON))
+        stubSubmit()
+        let form = makeForm()
+
+        let first = await form.submit()
+        let second = await form.submit()
+
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(second)
+        XCTAssertEqual(configFetches, 1)
+        XCTAssertEqual(captcha.requestedAPIURLs, [Fixtures.apiURL])
+        XCTAssertEqual(captcha.tokenCount, 2)
+        XCTAssertEqual(posts.map { $0.json?["captchaToken"] as? String }, ["tok", "tok"])
+    }
+
+    func testCaptchaFailureReturnsNilAndPostsNothing() async {
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.captchaConfigJSON))
+        stubSubmit()
+        captcha.result = .failure(CaptchaError.challengeFailed(code: "600010"))
+        var submitted = 0
+        let form = makeForm(onSubmitted: { _ in submitted += 1 })
+
+        let result = await form.submit()
+
+        XCTAssertNil(result)
+        XCTAssertEqual(submitted, 0)
+        XCTAssertFalse(form.isSubmitting)
+        XCTAssertEqual(captcha.tokenCount, 1)
+        XCTAssertEqual(posts.count, 0)
+        XCTAssertEqual(logLines.filter { $0 == "[ConsentIQ] Captcha check failed; consent not submitted" }.count, 1, "\(logLines)")
+        XCTAssertFalse(logLines.contains { $0.contains("user-1") }, "\(logLines)")
+    }
+
+    func testCaptchaNotRequiredNeverAsksForAToken() async throws {
+        stubSubmit()
+        let form = makeForm()
+
+        let result = await form.submit()
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(captcha.tokenCount, 0)
+        let body = try XCTUnwrap(posts.first?.json)
+        XCTAssertNil(body["captchaToken"])
+    }
+
+    func testConfigFetchFailureSubmitsWithoutAToken() async throws {
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(status: 500, json: "{}"))
+        stubSubmit()
+        let form = makeForm()
+
+        let result = await form.submit()
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(captcha.tokenCount, 0)
+        let body = try XCTUnwrap(posts.first?.json)
+        XCTAssertNil(body["captchaToken"])
+    }
+
+    func testReusesTheLoadedSDKConfigForTheSameProperty() async throws {
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.captchaConfigJSON))
+        StubURLProtocol.stubFallback(StubResponse(json: Fixtures.noConsentJSON))
+        stubSubmit()
+        let suite = "ai.iqworks.consentiq.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sdk = ConsentIQ(
+            storage: ConsentStorage(userDefaults: defaults),
+            urlSessionConfiguration: StubURLProtocol.sessionConfiguration,
+            captchaProviderFactory: captcha.factory()
+        )
+        await sdk.initialize(ConsentIQConfig(propertyKey: Fixtures.propertyKey, apiURL: Fixtures.apiURL, autoShow: false))
+        XCTAssertEqual(configFetches, 1)
+
+        let result = await makeForm(consentIQ: sdk).submit()
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(configFetches, 1)
+        XCTAssertEqual(posts.first?.json?["captchaToken"] as? String, "tok")
     }
 
     func testResetClearsEveryChannel() {

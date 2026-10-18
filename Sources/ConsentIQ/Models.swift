@@ -389,6 +389,7 @@ public struct ConsentSubmission: Encodable, Sendable {
     public var geoSource: GeoSource?
     public var consentMethod: ConsentMethod
     public var consentVersion: String?
+    public var captchaToken: String?
 
     public init(
         propertyKey: String,
@@ -400,7 +401,8 @@ public struct ConsentSubmission: Encodable, Sendable {
         geoRegion: String? = nil,
         geoSource: GeoSource? = nil,
         consentMethod: ConsentMethod = .sdk,
-        consentVersion: String? = nil
+        consentVersion: String? = nil,
+        captchaToken: String? = nil
     ) {
         self.propertyKey = propertyKey
         self.subjectId = subjectId
@@ -412,6 +414,7 @@ public struct ConsentSubmission: Encodable, Sendable {
         self.geoSource = geoSource
         self.consentMethod = consentMethod
         self.consentVersion = consentVersion
+        self.captchaToken = captchaToken
     }
 }
 

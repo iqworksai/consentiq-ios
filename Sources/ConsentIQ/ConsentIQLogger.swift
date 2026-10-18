@@ -5,6 +5,7 @@ struct ConsentIQLogger {
     static let prefix = "[ConsentIQ]"
     static let captchaWarning = "This property requires a captcha, which mobile SDKs cannot satisfy. "
         + "Turn off \"Require captcha\" for this property in the ConsentIQ dashboard."
+    static let captchaFailedWarning = "Captcha check failed; consent not submitted"
 
     private static let logger = Logger(subsystem: "ai.iqworks.consentiq", category: "sdk")
 

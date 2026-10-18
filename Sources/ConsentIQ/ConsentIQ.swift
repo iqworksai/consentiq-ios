@@ -26,16 +26,34 @@ public final class ConsentIQ: ObservableObject {
     public private(set) var initializationTask: Task<Void, Never>?
 
     let storage: ConsentStorage
+    let captchaProviderFactory: CaptchaProviderFactory
     var logSink: ((String) -> Void)?
 
     private let sessionConfiguration: URLSessionConfiguration
     private var apiClient: ConsentIQAPIClient?
+    private var captchaProvider: (any CaptchaTokenProviding)?
     private var logger = ConsentIQLogger()
     private var hasWarnedAboutCaptcha = false
 
-    public nonisolated init(storage: ConsentStorage = ConsentStorage(), urlSessionConfiguration: URLSessionConfiguration = .default) {
+    public nonisolated convenience init(
+        storage: ConsentStorage = ConsentStorage(),
+        urlSessionConfiguration: URLSessionConfiguration = .default
+    ) {
+        self.init(
+            storage: storage,
+            urlSessionConfiguration: urlSessionConfiguration,
+            captchaProviderFactory: { makeDefaultCaptchaProvider(apiURL: $0) }
+        )
+    }
+
+    nonisolated init(
+        storage: ConsentStorage,
+        urlSessionConfiguration: URLSessionConfiguration,
+        captchaProviderFactory: @escaping CaptchaProviderFactory
+    ) {
         self.storage = storage
         self.sessionConfiguration = urlSessionConfiguration
+        self.captchaProviderFactory = captchaProviderFactory
     }
 
     public func configure(_ config: ConsentIQConfig) {
@@ -65,10 +83,7 @@ public final class ConsentIQ: ObservableObject {
             regulation = propertyConfig.resolvedRegulation
             language = config.language ?? propertyConfig.property.defaultLanguage ?? "en"
 
-            if propertyConfig.requireCaptcha, !hasWarnedAboutCaptcha {
-                hasWarnedAboutCaptcha = true
-                logger.warning(ConsentIQLogger.captchaWarning)
-            }
+            resolveCaptchaProvider(for: propertyConfig, apiURL: config.apiURL)
 
             var foundExistingConsent = false
             if let subjectId {
@@ -223,9 +238,34 @@ public final class ConsentIQ: ObservableObject {
         return config.autoGenerateSubjectId ? storage.getOrCreateSubjectId() : nil
     }
 
+    private func resolveCaptchaProvider(for propertyConfig: PropertyConfig, apiURL: URL) {
+        guard propertyConfig.requireCaptcha else {
+            captchaProvider = nil
+            return
+        }
+        captchaProvider = captchaProviderFactory(apiURL)
+        if captchaProvider == nil, !hasWarnedAboutCaptcha {
+            hasWarnedAboutCaptcha = true
+            logger.warning(ConsentIQLogger.captchaWarning)
+        }
+    }
+
+    private func captchaToken() async throws -> String? {
+        guard let config, config.requiresCaptchaToken, let captchaProvider else { return nil }
+        return try await captchaProvider.token()
+    }
+
     private func submit(cookieConsents: ConsentState, marketingConsents: MarketingConsentState) async {
         guard let subjectId, let apiClient else {
             logger.debug("Skipping consent submit: no subject id")
+            return
+        }
+        let captchaToken: String?
+        do {
+            captchaToken = try await self.captchaToken()
+        } catch {
+            logger.debug("Captcha token unavailable: \(error)")
+            logger.warning(ConsentIQLogger.captchaFailedWarning)
             return
         }
         do {
@@ -234,7 +274,8 @@ public final class ConsentIQ: ObservableObject {
                 subjectId: subjectId,
                 cookieConsents: cookieConsents,
                 marketingConsents: marketingConsents,
-                consentMethod: .sdk
+                consentMethod: .sdk,
+                captchaToken: captchaToken
             ))
             storage.saveConsent(cookieConsents)
             configuration?.onConsentChange?(cookieConsents, marketingConsents)

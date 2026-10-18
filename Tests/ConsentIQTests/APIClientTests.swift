@@ -130,6 +130,7 @@ final class APIClientTests: XCTestCase {
         let body = try XCTUnwrap(StubURLProtocol.requests.first?.json)
         XCTAssertNil(body["cookieConsents"])
         XCTAssertNil(body["subjectType"])
+        XCTAssertNil(body["captchaToken"])
         XCTAssertEqual(body["consentMethod"] as? String, "form")
     }
 
@@ -173,14 +174,17 @@ final class APIClientTests: XCTestCase {
         }
     }
 
-    func testCaptchaRefusalSurfacesServerMessage() async {
+    func testCaptchaTokenIsSentAndRefusalSurfacesServerMessage() async throws {
         StubURLProtocol.stub("POST", Fixtures.consentPath,
                              StubResponse(status: 400, json: #"{"error":"Captcha verification failed. Please try again."}"#))
 
         do {
-            _ = try await client.submitConsent(
-                ConsentSubmission(propertyKey: Fixtures.propertyKey, subjectId: "s", cookieConsents: ["necessary": true])
-            )
+            _ = try await client.submitConsent(ConsentSubmission(
+                propertyKey: Fixtures.propertyKey,
+                subjectId: "s",
+                cookieConsents: ["necessary": true],
+                captchaToken: "expired-token"
+            ))
             XCTFail("Expected an error")
         } catch let error as ConsentIQAPIError {
             XCTAssertEqual(error.statusCode, 400)
@@ -188,6 +192,8 @@ final class APIClientTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error type: \(error)")
         }
+        let body = try XCTUnwrap(StubURLProtocol.requests.first?.json)
+        XCTAssertEqual(body["captchaToken"] as? String, "expired-token")
     }
 
     func testTransportFailurePropagates() async {
