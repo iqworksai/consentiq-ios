@@ -12,14 +12,14 @@ Requires iOS 16.0 or later and Swift 5.9 or later.
 ### Swift Package Manager
 
 In Xcode choose File > Add Package Dependencies, enter
-`https://github.com/iqworksai/consentiq-ios`, and pick "Up to Next Major Version" from `1.0.0`.
+`https://github.com/iqworksai/consentiq-ios`, and pick "Up to Next Major Version" from `1.0.1`.
 Add the `ConsentIQ` library to your app target.
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/iqworksai/consentiq-ios", from: "1.0.0"),
+    .package(url: "https://github.com/iqworksai/consentiq-ios", from: "1.0.1"),
 ],
 targets: [
     .target(name: "YourApp", dependencies: [
@@ -31,7 +31,7 @@ targets: [
 A `ConsentIQ.podspec` is included for teams that vendor pods from git:
 
 ```ruby
-pod 'ConsentIQ', :git => 'https://github.com/iqworksai/consentiq-ios.git', :tag => 'v1.0.0'
+pod 'ConsentIQ', :git => 'https://github.com/iqworksai/consentiq-ios.git', :tag => 'v1.0.1'
 ```
 
 ## Quick start (SwiftUI)
@@ -136,11 +136,11 @@ of the same app use the iOS key.
 | --- | --- | --- |
 | `propertyKey` | required | The property's public key from the dashboard |
 | `apiURL` | `https://consent.iqworks.ai` | ConsentIQ base URL |
-| `subjectId` | `nil` | Supply your own pseudonymous id instead of a generated one |
+| `subjectId` | `nil` | Supply your own id instead of a generated one. It must be random and unguessable, never an account number, email address or phone number: the consent lookup needs only the property key, which ships in your app |
 | `autoGenerateSubjectId` | `true` | Generate and persist a UUID when `subjectId` is nil |
 | `language` | `nil` | Override the property's default language, for example `"ar-EG"` |
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |
-| `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq` |
+| `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq`. Turn it on in debug builds only |
 
 `ConsentIQ` (`@MainActor`, `ObservableObject`, use `ConsentIQ.shared`)
 

@@ -19,4 +19,4 @@ create it once locally and drop these two files in.
 
 To point the example at the published package instead of the local checkout, use
 File > Add Package Dependencies with `https://github.com/iqworksai/consentiq-ios` and the
-`1.0.0` version rule.
+`1.0.1` version rule.

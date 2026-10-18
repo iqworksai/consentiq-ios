@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- Debug log lines are logged with private privacy, so the device log redacts them unless a
+  debugger is attached.
+- Debug logs no longer include the subject id or the consent id.
+- The example app turns on debug logging in debug builds only.
+- README: a caller-supplied `subjectId` must be random and unguessable.
+
 ## 1.0.0
 
 First release.

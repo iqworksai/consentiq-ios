@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'ConsentIQ'
-  s.version          = '1.0.0'
+  s.version          = '1.0.1'
   s.summary          = 'ConsentIQ consent management SDK for iOS.'
   s.description      = <<-DESC
     Fetches a ConsentIQ property's configuration, shows a consent sheet on first launch,

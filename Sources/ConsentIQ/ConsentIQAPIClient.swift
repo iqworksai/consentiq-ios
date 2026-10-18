@@ -39,7 +39,7 @@ public struct ConsentIQAPIClient: Sendable {
     }
 
     public func getConsent(subjectId: String) async throws -> ConsentLookup {
-        logger.debug("Fetching consent for subject \(subjectId)")
+        logger.debug("Fetching consent")
         let lookup: ConsentLookup = try await request(path: "/api/public/consent/\(propertyKey)/\(subjectId)")
         logger.debug("Consent loaded: found=\(lookup.consent != nil) expired=\(lookup.expired)")
         return lookup
@@ -48,10 +48,10 @@ public struct ConsentIQAPIClient: Sendable {
     public func submitConsent(_ submission: ConsentSubmission) async throws -> ConsentSubmissionResult {
         var body = submission
         body.propertyKey = propertyKey
-        logger.debug("Submitting consent for subject \(body.subjectId) via \(body.consentMethod.rawValue)")
+        logger.debug("Submitting consent via \(body.consentMethod.rawValue)")
         let payload = try JSONEncoder().encode(body)
         let result: ConsentSubmissionResult = try await request(path: "/api/public/consent", method: "POST", body: payload)
-        logger.debug("Consent submitted: \(result.consentId)")
+        logger.debug("Consent submitted")
         return result
     }
 

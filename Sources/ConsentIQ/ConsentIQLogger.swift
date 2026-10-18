@@ -19,7 +19,7 @@ struct ConsentIQLogger {
     func debug(_ message: @autoclosure () -> String) {
         guard debugEnabled else { return }
         let line = "\(Self.prefix) \(message())"
-        Self.logger.debug("\(line, privacy: .public)")
+        Self.logger.debug("\(line, privacy: .private)")
         sink?(line)
     }
 
