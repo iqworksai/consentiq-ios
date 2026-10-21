@@ -283,6 +283,7 @@ public struct PropertyConfig: Decodable, Sendable {
     public var requireCaptcha: Bool
     public var turnstileSiteKey: String?
     public var autoBlock: Bool
+    public var tcf: TcfSettings?
     public var translations: [String: TranslationSet]
     public var labels: [String: BannerLabels]
     public var rtl: [String]
@@ -290,7 +291,7 @@ public struct PropertyConfig: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case property, banner, categories, marketingChannels, geoRules, resolvedRegulation
         case privacyNotices, formConsentSources, privacyNoticeUrl, requireCaptcha, turnstileSiteKey
-        case autoBlock, translations, labels, rtl
+        case autoBlock, tcf, translations, labels, rtl
     }
 
     public init(from decoder: Decoder) throws {
@@ -307,6 +308,7 @@ public struct PropertyConfig: Decodable, Sendable {
         requireCaptcha = try container.decodeIfPresent(Bool.self, forKey: .requireCaptcha) ?? false
         turnstileSiteKey = try container.decodeIfPresent(String.self, forKey: .turnstileSiteKey)
         autoBlock = try container.decodeIfPresent(Bool.self, forKey: .autoBlock) ?? false
+        tcf = try? container.decodeIfPresent(TcfSettings.self, forKey: .tcf)
         translations = try container.decodeIfPresent([String: TranslationSet].self, forKey: .translations) ?? [:]
         labels = try container.decodeIfPresent([String: BannerLabels].self, forKey: .labels) ?? [:]
         rtl = try container.decodeIfPresent([String].self, forKey: .rtl) ?? []

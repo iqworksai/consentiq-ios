@@ -4,6 +4,7 @@ import Foundation
 public final class ConsentStorage: @unchecked Sendable {
     public static let consentKey = "consentiq_consent"
     public static let subjectIdKey = "consentiq_subject_id"
+    public static let tcfKey = "consentiq_tcf"
 
     private let defaults: UserDefaults
 
@@ -42,9 +43,25 @@ public final class ConsentStorage: @unchecked Sendable {
         defaults.removeObject(forKey: Self.subjectIdKey)
     }
 
+    func loadTcfStored() -> [String: Any]? {
+        guard let data = defaults.data(forKey: Self.tcfKey) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    func saveTcfStored(_ stored: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(stored),
+              let data = try? JSONSerialization.data(withJSONObject: stored) else { return }
+        defaults.set(data, forKey: Self.tcfKey)
+    }
+
+    public func clearTcf() {
+        defaults.removeObject(forKey: Self.tcfKey)
+    }
+
     public func clearAll() {
         clearConsent()
         clearSubjectId()
+        clearTcf()
     }
 
     public static func generateSubjectId() -> String {

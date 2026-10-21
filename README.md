@@ -141,6 +141,7 @@ of the same app use the iOS key.
 | `language` | `nil` | Override the property's default language, for example `"ar-EG"` |
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |
 | `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq`. Turn it on in debug builds only |
+| `onError` | `nil` | Called when the SDK recovers from a failure; today, a TCF screen that could not load or answer |
 
 `ConsentIQ` (`@MainActor`, `ObservableObject`, use `ConsentIQ.shared`)
 
@@ -149,13 +150,15 @@ of the same app use the iOS key.
 | `consent`, `marketingConsent` | Published maps of category and channel to `Bool`; `necessary` is always `true` |
 | `config` | Published `PropertyConfig` once loaded |
 | `isLoading`, `isSheetVisible`, `language`, `regulation` | Published state; `regulation` is the server-resolved regime or `nil` |
+| `isTcfActive` | Published; `true` while the property's IAB TCF screens replace the native sheet |
 | `configure(_:)` | Starts initialization in a task; `initialize(_:)` is the awaitable form |
 | `hasConsent(_:)`, `hasMarketingConsent(_:)` | Query a category or channel |
 | `acceptAll()`, `rejectAll()`, `savePreferences(_:)` | The sheet's three outcomes; each also has an `async` form |
 | `updateConsent(_:)`, `updateMarketingConsent(_:)` | Merge a partial map and record it |
 | `showSheet()`, `hideSheet()`, `dismissSheet()` | Open, close silently, or close as a visitor back-out |
+| `showPrivacyChoices()` | Open the visitor's choices: the TCF screens when TCF is active, otherwise the sheet |
 | `resetConsent()` | Clear the local cache and subject id and return to defaults |
-| `presentSheet(from:)` | UIKit presentation of the same sheet |
+| `presentSheet(from:)`, `presentPrivacyChoices(from:)` | UIKit presentation of the same choices |
 
 Every write updates local state first, posts to ConsentIQ, persists the cache, then calls
 `onConsentChange`. A failed post is logged and local state is kept.
@@ -180,6 +183,39 @@ All callbacks are optional fields on `ConsentIQConfig` and run on the main actor
 | `onReject(outcome)` | Reject all |
 | `onSave(outcome)` | Save from the category list |
 | `onClose()` | The visitor swiped the sheet away without choosing; never after accept, reject, save or `hideSheet()` |
+| `onError(error)` | A TCF screen failed (`TcfError`, with a `code`); the native sheet is used instead |
+
+## IAB TCF
+
+When a property has IAB TCF turned on in the dashboard, the SDK follows the IAB in-app spec:
+
+- At start-up it writes `IABTCF_CmpSdkID` and `IABTCF_CmpSdkVersion` to `UserDefaults.standard`.
+  Where GDPR does not apply to the visitor it writes `IABTCF_gdprApplies = 0` and uses the native
+  sheet as usual.
+- Otherwise it loads ConsentIQ's TCF screens from consent.iqworks.ai in a hidden web view. If the
+  stored decision still stands, nothing is shown. If the visitor must choose, the screens are
+  presented full-screen over your app; you do not need to present anything yourself.
+- A decision writes every `IABTCF_*` key to `UserDefaults.standard`, removes publisher restriction
+  keys that no longer apply, updates `consent` and calls `onAccept`, `onReject` or `onSave`, then
+  `onConsentChange`. ConsentIQ has already recorded the consent, so it is not sent again.
+- Call `showPrivacyChoices()` (or `presentPrivacyChoices(from:)` in UIKit) from your privacy
+  settings to reopen the screens. A reopened screen has its own close button, which reports
+  `onClose`.
+- With `autoShow: false` the screens open only when you call `showPrivacyChoices()`.
+- If the screens cannot load within 15 seconds, or answer within 45 seconds of starting, the SDK
+  calls `onError` and shows the native sheet. The next `showPrivacyChoices()` tries the TCF screens
+  again. A choice made in that native sheet removes the TCF decision keys the SDK wrote, so an older
+  TC string never outlives it.
+- If another CMP's `IABTCF_CmpSdkID` is already on the device, the SDK leaves its keys alone until
+  the visitor makes a choice in ConsentIQ's screens.
+
+`resetConsent()`, or consent the server reports as expired, removes the TCF decision keys the SDK
+wrote, so vendor SDKs stop reading the old choices. `IABTCF_CmpSdkID`, `IABTCF_CmpSdkVersion` and
+`IABTCF_gdprApplies` stay, and keys another CMP wrote are left alone. If the property later turns
+TCF off, the next start-up removes every `IABTCF_*` key the SDK wrote, `IABTCF_CmpSdkID` included.
+
+The `IABTCF_*` keys always go to `UserDefaults.standard`, even when you pass `ConsentStorage` a
+different suite, because that is where vendor SDKs read them.
 
 ## Limitations
 

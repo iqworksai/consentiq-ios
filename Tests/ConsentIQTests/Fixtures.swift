@@ -17,11 +17,13 @@ enum Fixtures {
         requireCaptcha: Bool = false,
         turnstileSiteKey: String? = nil,
         defaultLanguage: String? = "en",
-        resolvedRegulation: String? = "DPDPA"
+        resolvedRegulation: String? = "DPDPA",
+        tcf: String? = nil
     ) -> String {
         let language = defaultLanguage.map { "\"\($0)\"" } ?? "null"
         let regulation = resolvedRegulation.map { "\"\($0)\"" } ?? "null"
         let siteKey = turnstileSiteKey.map { "\"\($0)\"" } ?? "null"
+        let tcfBlock = tcf.map { "\"tcf\": \($0)," } ?? ""
         return """
         {
           "property": {
@@ -55,6 +57,7 @@ enum Fixtures {
           "requireCaptcha": \(requireCaptcha),
           "turnstileSiteKey": \(siteKey),
           "autoBlock": false,
+          \(tcfBlock)
           "translations": {
             "en": {
               "bannerDescription": "We use cookies.",
@@ -92,6 +95,38 @@ enum Fixtures {
         "regulationApplied": "DPDPA",
         "consentVersion": null
       }
+    }
+    """
+
+    static func tcfJSON(cmpId: Int = 300, gdprApplies: Bool = true, enabled: Bool = true) -> String {
+        """
+        {
+          "enabled": \(enabled), "gdprApplies": \(gdprApplies), "vendorIds": [1, 755],
+          "publisherCountryCode": "DE",
+          "publisherRestrictions": [ { "purposeId": 2, "restrictionType": 1, "vendorIds": [755] } ],
+          "repromptMonths": 6, "tcfPolicyVersion": 5, "cmpId": \(cmpId), "cmpVersion": 1,
+          "vendorListUrl": "https://consent.example.test/api/public/tcf/\(propertyKey)/vendor-list",
+          "futureField": [1, 2]
+        }
+        """
+    }
+
+    static func tcfDecisionJSON(scope: String?, consent: String) -> String {
+        let scopeField = scope.map { ", \"scope\": \"\($0)\"" } ?? ""
+        return #"{"type":"decision","tcString":"CQ-s","keys":{"IABTCF_gdprApplies":1},"consent":\#(consent)\#(scopeField)}"#
+    }
+
+    static let tcfDecisionJSON = """
+    {
+      "type": "decision",
+      "tcString": "CQ-test",
+      "keys": {
+        "IABTCF_CmpSdkID": 300, "IABTCF_CmpSdkVersion": 1, "IABTCF_PolicyVersion": 5, "IABTCF_gdprApplies": 1,
+        "IABTCF_PublisherCC": "DE", "IABTCF_PurposeOneTreatment": 0, "IABTCF_TCString": "CQ-test",
+        "IABTCF_PurposeConsents": "1101", "IABTCF_PublisherRestrictions2": "_1"
+      },
+      "stored": { "tcString": "CQ-test", "vendorIds": [1, 755], "restrictionsKey": "2:1:755" },
+      "consent": { "necessary": true, "analytics": true, "marketing": false }
     }
     """
 

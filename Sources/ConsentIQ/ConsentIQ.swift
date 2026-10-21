@@ -13,13 +13,14 @@ public final class ConsentIQ: ObservableObject {
         ConsentCategory.social: false,
     ]
 
-    @Published public private(set) var consent: ConsentState = ConsentIQ.defaultConsent
+    @Published public internal(set) var consent: ConsentState = ConsentIQ.defaultConsent
     @Published public private(set) var marketingConsent: MarketingConsentState = [:]
     @Published public private(set) var config: PropertyConfig?
     @Published public private(set) var isLoading = true
     @Published public private(set) var isSheetVisible = false
     @Published public private(set) var language = "en"
     @Published public private(set) var regulation: String?
+    @Published public internal(set) var isTcfActive = false
 
     public private(set) var subjectId: String?
     public private(set) var configuration: ConsentIQConfig?
@@ -27,12 +28,22 @@ public final class ConsentIQ: ObservableObject {
 
     let storage: ConsentStorage
     let captchaProviderFactory: CaptchaProviderFactory
+    let tcfPageFactory: TcfPageFactory
+    let tcfKeys = TcfKeyStore()
     var logSink: ((String) -> Void)?
+    var logger = ConsentIQLogger()
+    var tcfReadyTimeoutNanoseconds = TcfSession.defaultReadyTimeoutNanoseconds
+    var tcfAnswerTimeoutNanoseconds = TcfSession.defaultAnswerTimeoutNanoseconds
+    var tcfPendingOpen: TcfPendingOpen?
+    var tcfFellBack = false
+    var tcfSession: TcfSession?
+    var tcfTask: Task<Void, Never>?
+    var tcfRun = 0
+    var hasExistingConsent = false
 
     private let sessionConfiguration: URLSessionConfiguration
     private var apiClient: ConsentIQAPIClient?
     private var captchaProvider: (any CaptchaTokenProviding)?
-    private var logger = ConsentIQLogger()
     private var hasWarnedAboutCaptcha = false
 
     public nonisolated convenience init(
@@ -49,11 +60,13 @@ public final class ConsentIQ: ObservableObject {
     nonisolated init(
         storage: ConsentStorage,
         urlSessionConfiguration: URLSessionConfiguration,
-        captchaProviderFactory: @escaping CaptchaProviderFactory
+        captchaProviderFactory: @escaping CaptchaProviderFactory,
+        tcfPageFactory: @escaping TcfPageFactory = { makeDefaultTcfPage(pageURL: $0, presenter: $1) }
     ) {
         self.storage = storage
         self.sessionConfiguration = urlSessionConfiguration
         self.captchaProviderFactory = captchaProviderFactory
+        self.tcfPageFactory = tcfPageFactory
     }
 
     public func configure(_ config: ConsentIQConfig) {
@@ -74,6 +87,8 @@ public final class ConsentIQ: ObservableObject {
         )
         apiClient = client
         isLoading = true
+        endTcfSession()
+        isTcfActive = false
 
         do {
             subjectId = resolveSubjectId(config)
@@ -84,17 +99,22 @@ public final class ConsentIQ: ObservableObject {
             language = config.language ?? propertyConfig.property.defaultLanguage ?? "en"
 
             resolveCaptchaProvider(for: propertyConfig, apiURL: config.apiURL)
+            prepareTcf(propertyConfig)
 
             var foundExistingConsent = false
             if let subjectId {
                 foundExistingConsent = await restoreConsent(client: client, subjectId: subjectId)
             }
+            hasExistingConsent = foundExistingConsent
 
             isLoading = false
 
-            if config.autoShow, !foundExistingConsent {
-                isSheetVisible = true
-                config.onOpen?()
+            if isTcfActive {
+                if config.autoShow {
+                    startTcf(reopen: false)
+                }
+            } else if config.autoShow, !foundExistingConsent {
+                openNativeSheet()
             }
         } catch {
             logger.error("Failed to initialize: \(error.localizedDescription)")
@@ -125,6 +145,7 @@ public final class ConsentIQ: ObservableObject {
 
         consent = accepted
         isSheetVisible = false
+        discardTcfDecisionAfterNativeChoice()
         configuration?.onAccept?(ConsentOutcome(scope: .all, consent: accepted))
         await submit(cookieConsents: accepted, marketingConsents: marketingConsent)
     }
@@ -133,6 +154,7 @@ public final class ConsentIQ: ObservableObject {
         let rejected = ConsentIQ.defaultConsent
         consent = rejected
         isSheetVisible = false
+        discardTcfDecisionAfterNativeChoice()
         configuration?.onReject?(ConsentOutcome(consent: rejected))
         await submit(cookieConsents: rejected, marketingConsents: [:])
     }
@@ -141,6 +163,7 @@ public final class ConsentIQ: ObservableObject {
         let next = selection.forcingNecessary()
         consent = next
         isSheetVisible = false
+        discardTcfDecisionAfterNativeChoice()
         configuration?.onSave?(ConsentOutcome(consent: next))
         await submit(cookieConsents: next, marketingConsents: marketingConsent)
     }
@@ -158,6 +181,18 @@ public final class ConsentIQ: ObservableObject {
     }
 
     public func showSheet() {
+        if isTcfActive {
+            startTcf(reopen: true)
+        } else {
+            openNativeSheet()
+        }
+    }
+
+    public func showPrivacyChoices() {
+        showSheet()
+    }
+
+    func openNativeSheet() {
         isSheetVisible = true
         configuration?.onOpen?()
     }
@@ -178,6 +213,7 @@ public final class ConsentIQ: ObservableObject {
         consent = ConsentIQ.defaultConsent
         marketingConsent = [:]
         storage.clearAll()
+        tcfKeys.clearDecision()
         if let configuration {
             subjectId = resolveSubjectId(configuration)
         }
@@ -222,6 +258,8 @@ public final class ConsentIQ: ObservableObject {
         }
         if lookup?.expired == true {
             storage.clearConsent()
+            storage.clearTcf()
+            tcfKeys.clearDecision()
             return false
         }
         if let local = storage.loadConsent() {

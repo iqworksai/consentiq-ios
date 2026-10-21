@@ -3,10 +3,9 @@ import UIKit
 import WebKit
 
 @MainActor
-final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding {
+final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding, ScriptMessageReceiving {
     nonisolated static let pagePath = "/api/public/captcha/mobile"
-    nonisolated static let challengeHost = "challenges.cloudflare.com"
-    static let messageHandlerName = "consentiq"
+    static let messageHandlerName = HostedPage.messageHandlerName
     static let timeoutNanoseconds: UInt64 = 15_000_000_000
 
     private static var providers: [URL: WebViewCaptchaProvider] = [:]
@@ -123,15 +122,8 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding {
 
     // A detached web view may be throttled, so it rides invisibly in the key window.
     private func attachIfNeeded(_ webView: WKWebView) {
-        guard webView.window == nil, let window = Self.keyWindow() else { return }
+        guard webView.window == nil, let window = HostedPage.keyWindow() else { return }
         window.addSubview(webView)
-    }
-
-    private static func keyWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive && $0.keyWindow != nil }?
-            .keyWindow
     }
 
     private func execute() {
@@ -173,10 +165,8 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding {
         finishPending(.failure(CaptchaError.pageLoadFailed))
     }
 
-    fileprivate func receive(_ message: WKScriptMessage) {
-        let origin = message.frameInfo.securityOrigin
-        guard message.frameInfo.isMainFrame,
-              Self.isPageOrigin(scheme: origin.protocol, host: origin.host, port: origin.port, pageURL: pageURL),
+    func receive(_ message: WKScriptMessage) {
+        guard HostedPage.isPageMessage(message, pageURL: pageURL),
               let body = message.body as? String,
               let event = try? JSONDecoder().decode(PageMessage.self, from: Data(body.utf8)) else { return }
 
@@ -198,46 +188,11 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding {
     }
 
     nonisolated static func isPageOrigin(scheme: String, host: String, port: Int, pageURL: URL) -> Bool {
-        guard let pageScheme = pageURL.scheme?.lowercased(), let pageHost = pageURL.host?.lowercased() else { return false }
-        return scheme.lowercased() == pageScheme
-            && host.lowercased() == pageHost
-            && effectivePort(port == 0 ? nil : port, scheme: pageScheme) == effectivePort(pageURL.port, scheme: pageScheme)
+        HostedPage.isPageOrigin(scheme: scheme, host: host, port: port, pageURL: pageURL)
     }
 
     nonisolated static func allowsNavigation(to url: URL?, isMainFrame: Bool, pageURL: URL) -> Bool {
-        guard let url else { return false }
-        if isMainFrame {
-            return isSamePage(url, pageURL)
-        }
-        if url.absoluteString == "about:blank" || url.absoluteString == "about:srcdoc" {
-            return true
-        }
-        return url.scheme?.lowercased() == "https"
-            && url.host?.lowercased() == challengeHost
-            && effectivePort(url.port, scheme: "https") == 443
-    }
-
-    private nonisolated static func isSamePage(_ url: URL, _ pageURL: URL) -> Bool {
-        guard let candidate = URLComponents(url: url, resolvingAgainstBaseURL: true),
-              let page = URLComponents(url: pageURL, resolvingAgainstBaseURL: true),
-              let scheme = page.scheme?.lowercased() else { return false }
-        return candidate.scheme?.lowercased() == scheme
-            && candidate.host?.lowercased() == page.host?.lowercased()
-            && effectivePort(candidate.port, scheme: scheme) == effectivePort(page.port, scheme: scheme)
-            && candidate.percentEncodedPath == page.percentEncodedPath
-            && candidate.percentEncodedQuery == page.percentEncodedQuery
-            && candidate.fragment == page.fragment
-    }
-
-    private nonisolated static func effectivePort(_ port: Int?, scheme: String) -> Int? {
-        if let port {
-            return port
-        }
-        switch scheme {
-        case "https": return 443
-        case "http": return 80
-        default: return nil
-        }
+        HostedPage.allowsNavigation(to: url, isMainFrame: isMainFrame, pageURL: pageURL)
     }
 }
 
@@ -282,20 +237,6 @@ extension WebViewCaptchaProvider: WKNavigationDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         pageLoadFailed()
-    }
-}
-
-// WKUserContentController retains its handlers, so a direct handler would keep the provider alive forever.
-@MainActor
-private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
-    private weak var target: WebViewCaptchaProvider?
-
-    init(target: WebViewCaptchaProvider) {
-        self.target = target
-    }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        target?.receive(message)
     }
 }
 #endif

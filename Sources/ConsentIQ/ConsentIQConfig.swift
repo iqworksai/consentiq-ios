@@ -16,6 +16,7 @@ public struct ConsentIQConfig {
     public var onReject: ((ConsentOutcome) -> Void)?
     public var onSave: ((ConsentOutcome) -> Void)?
     public var onClose: (() -> Void)?
+    public var onError: ((Error) -> Void)?
 
     public init(
         propertyKey: String,
@@ -30,7 +31,8 @@ public struct ConsentIQConfig {
         onAccept: ((ConsentOutcome) -> Void)? = nil,
         onReject: ((ConsentOutcome) -> Void)? = nil,
         onSave: ((ConsentOutcome) -> Void)? = nil,
-        onClose: (() -> Void)? = nil
+        onClose: (() -> Void)? = nil,
+        onError: ((Error) -> Void)? = nil
     ) {
         self.propertyKey = propertyKey
         self.apiURL = apiURL
@@ -45,5 +47,6 @@ public struct ConsentIQConfig {
         self.onReject = onReject
         self.onSave = onSave
         self.onClose = onClose
+        self.onError = onError
     }
 }

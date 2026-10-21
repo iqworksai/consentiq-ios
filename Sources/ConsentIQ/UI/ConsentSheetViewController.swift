@@ -42,8 +42,23 @@ public final class ConsentSheetViewController: UIHostingController<ConsentSheetC
 
 public extension ConsentIQ {
     func presentSheet(from presenter: UIViewController, animated: Bool = true) {
+        guard isTcfActive else {
+            presentNativeSheet(from: presenter, animated: animated)
+            return
+        }
+        startTcf(reopen: true, presenter: presenter) { [weak self, weak presenter] in
+            guard let self, let presenter else { return }
+            presentNativeSheet(from: presenter, animated: animated)
+        }
+    }
+
+    func presentPrivacyChoices(from presenter: UIViewController, animated: Bool = true) {
+        presentSheet(from: presenter, animated: animated)
+    }
+
+    private func presentNativeSheet(from presenter: UIViewController, animated: Bool) {
         if !isSheetVisible {
-            showSheet()
+            openNativeSheet()
         }
         presenter.present(ConsentSheetViewController(consentIQ: self), animated: animated)
     }
