@@ -26,6 +26,10 @@ public final class ConsentSheetViewController: UIHostingController<ConsentSheetC
 
     override public func viewDidLoad() {
         super.viewDidLoad()
+        if let palette = SheetPalette(banner: consentIQ.config?.banner) {
+            view.backgroundColor = UIColor(palette.background.color)
+            overrideUserInterfaceStyle = palette.isDark ? .dark : .light
+        }
         cancellable = consentIQ.$isSheetVisible
             .dropFirst()
             .receive(on: DispatchQueue.main)

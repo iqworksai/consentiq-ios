@@ -81,10 +81,12 @@ public struct BannerConfig: Decodable, Sendable {
     public var cookieIconUrl: String?
     public var overlay: Bool
     public var noticeUrl: String?
+    public var bannerBgColor: String?
+    public var bannerTextColor: String?
 
     enum CodingKeys: String, CodingKey {
         case position, layout, theme, showLogo, logoUrl, primaryColor, cornerStyle
-        case showCookieIcon, cookieIconUrl, overlay, noticeUrl
+        case showCookieIcon, cookieIconUrl, overlay, noticeUrl, bannerBgColor, bannerTextColor
     }
 
     public init(from decoder: Decoder) throws {
@@ -100,6 +102,8 @@ public struct BannerConfig: Decodable, Sendable {
         cookieIconUrl = try container.decodeIfPresent(String.self, forKey: .cookieIconUrl)
         overlay = try container.decodeIfPresent(Bool.self, forKey: .overlay) ?? false
         noticeUrl = try container.decodeIfPresent(String.self, forKey: .noticeUrl)
+        bannerBgColor = try? container.decodeIfPresent(String.self, forKey: .bannerBgColor)
+        bannerTextColor = try? container.decodeIfPresent(String.self, forKey: .bannerTextColor)
     }
 
     public func noticeURL(language: String) -> URL? {

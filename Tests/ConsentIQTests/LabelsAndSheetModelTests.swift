@@ -108,6 +108,55 @@ final class LabelsAndSheetModelTests: XCTestCase {
         XCTAssertEqual(HexColor.defaultPrimary, HexColor.parse("#f97316"))
     }
 
+    private func banner(_ fields: String) throws -> BannerConfig {
+        try JSONDecoder().decode(BannerConfig.self, from: Data("{\(fields)}".utf8))
+    }
+
+    func testBannerColorsAreParsedTolerantly() throws {
+        XCTAssertNil(try Fixtures.decodeConfig().banner?.bannerBgColor)
+        let colored = try banner(##""bannerBgColor":"#0f172a","bannerTextColor":"#f8fafc","theme":"dark""##)
+        XCTAssertEqual(colored.bannerBgColor, "#0f172a")
+        XCTAssertEqual(colored.bannerTextColor, "#f8fafc")
+        let odd = try banner(##""bannerBgColor":12,"bannerTextColor":["#fff"],"theme":"light""##)
+        XCTAssertNil(odd.bannerBgColor)
+        XCTAssertNil(odd.bannerTextColor)
+        XCTAssertEqual(odd.theme, "light")
+    }
+
+    func testSheetPaletteUsesTheBannerColors() throws {
+        let dark = try XCTUnwrap(SheetPalette(banner: banner(##""bannerBgColor":"#0f172a","bannerTextColor":"#f8fafc""##)))
+        XCTAssertEqual(dark.background, HexColor(red: 0x0F, green: 0x17, blue: 0x2A))
+        XCTAssertEqual(dark.text, HexColor(red: 0xF8, green: 0xFA, blue: 0xFC))
+        XCTAssertTrue(dark.isDark)
+
+        let light = try XCTUnwrap(SheetPalette(banner: banner(##""bannerBgColor":"#fff""##)))
+        XCTAssertFalse(light.isDark)
+        XCTAssertEqual(light.text, HexColor(red: 0, green: 0, blue: 0), "missing text follows the background")
+
+        let darkNoText = try XCTUnwrap(SheetPalette(banner: banner(##""bannerBgColor":"#123","bannerTextColor":"blue""##)))
+        XCTAssertEqual(darkNoText.text, HexColor(red: 0xFF, green: 0xFF, blue: 0xFF))
+    }
+
+    func testSheetPaletteFallsBackWithoutAValidBackground() throws {
+        XCTAssertNil(SheetPalette(banner: nil))
+        XCTAssertNil(SheetPalette(banner: try Fixtures.decodeConfig().banner))
+        XCTAssertNil(SheetPalette(banner: try banner(##""bannerBgColor":"0f172a","bannerTextColor":"#fff""##)), "the # is required")
+        XCTAssertNil(SheetPalette(banner: try banner(##""bannerBgColor":"#12345""##)))
+        XCTAssertNil(SheetPalette(banner: try banner(##""bannerTextColor":"#fff""##)))
+    }
+
+    func testDarknessMatchesTheWebBannerThreshold() {
+        XCTAssertTrue(HexColor(red: 0, green: 0, blue: 0).isDark)
+        XCTAssertFalse(HexColor(red: 0xFF, green: 0xFF, blue: 0xFF).isDark)
+        XCTAssertTrue(HexColor(red: 149, green: 149, blue: 149).isDark)
+        XCTAssertFalse(HexColor(red: 150, green: 150, blue: 150).isDark)
+        XCTAssertEqual(HexColor(red: 0xF9, green: 0x73, blue: 0x16).brightness, 144)
+        XCTAssertTrue(HexColor(red: 0xF9, green: 0x73, blue: 0x16).isDark)
+        XCTAssertEqual(HexColor(red: 0, green: 0xFF, blue: 0).brightness, 149)
+        XCTAssertTrue(HexColor(red: 0, green: 0xFF, blue: 0).isDark)
+        XCTAssertFalse(HexColor(red: 0xFF, green: 0xFF, blue: 0).isDark)
+    }
+
     func testForcingNecessary() {
         XCTAssertEqual(["analytics": true].forcingNecessary(), ["analytics": true, "necessary": true])
         XCTAssertEqual(["necessary": false].forcingNecessary(), ["necessary": true])

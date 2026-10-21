@@ -84,6 +84,7 @@ public struct ConsentSheetContent: View {
             .padding(.bottom, 32)
         }
         .environment(\.layoutDirection, config.isRTL(language) ? .rightToLeft : .leftToRight)
+        .modifier(SheetPaletteModifier(palette: SheetPalette(banner: config.banner)))
     }
 
     private func categoryList(_ config: PropertyConfig, translations: TranslationSet?, primary: Color) -> some View {
@@ -137,6 +138,21 @@ public struct ConsentSheetContent: View {
         selection = nil
         showCategories = false
         consentIQ.savePreferences(values)
+    }
+}
+
+struct SheetPaletteModifier: ViewModifier {
+    let palette: SheetPalette?
+
+    func body(content: Content) -> some View {
+        if let palette {
+            content
+                .foregroundStyle(palette.text.color)
+                .background(palette.background.color.ignoresSafeArea())
+                .environment(\.colorScheme, palette.isDark ? .dark : .light)
+        } else {
+            content
+        }
     }
 }
 

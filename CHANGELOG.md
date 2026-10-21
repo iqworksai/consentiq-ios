@@ -15,6 +15,8 @@
   native sheet instead and tries the TCF screens again on the next open. A choice made in that
   native sheet removes the TCF decision keys this SDK wrote.
 - Keys written by another CMP are left alone until the visitor decides in ConsentIQ's screens.
+- The consent sheet uses the banner background and text colors set in the dashboard, when the
+  server sends them, with secondary text and controls following that background's light or dark.
 - `ConsentStorage.clearAll()` also clears the stored TCF decision (`consentiq_tcf`).
 - `resetConsent()`, and consent the server reports as expired, remove the TCF decision keys this
   SDK wrote from `UserDefaults.standard`. `IABTCF_CmpSdkID`, `IABTCF_CmpSdkVersion` and
