@@ -9,6 +9,11 @@
 - A challenge that has not finished within 3 seconds, or that asks for interaction, is shown over
   the app with a Cancel button. Once shown it waits up to 2 minutes. Cancelling, a failure or a
   timeout sends nothing more, keeps local state and logs the usual captcha warning.
+- App Attest: once per install and property the SDK generates an App Attest key and registers it
+  with ConsentIQ, then sends `X-ConsentIQ-Attest-Key` and `X-ConsentIQ-Assertion`, an assertion over
+  the exact request body, with every submission. Where App Attest is unsupported, or registration
+  fails, nothing is sent and ConsentIQ asks for a captcha instead; a refused key is replaced on the
+  next launch. Apps add the App Attest capability. The podspec links DeviceCheck and CryptoKit.
 - `ConsentIQConfig.identityToken`, `FormConsent.identityToken` and `ConsentSubmission.identityToken`
   send your server's signature for the person with each submission, unread by the SDK.
 - IAB TCF in-app support. When a property has TCF turned on and ConsentIQ's CMP ID is issued, the

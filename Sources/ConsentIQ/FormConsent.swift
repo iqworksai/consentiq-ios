@@ -68,13 +68,16 @@ public final class FormConsent: ObservableObject {
         onConsentChange: ((MarketingConsentState) -> Void)?,
         consentIQ: ConsentIQ?,
         captchaProviderFactory: @escaping CaptchaProviderFactory,
+        appAttestorFactory: @escaping AppAttestorFactory = defaultAppAttestorFactory,
         logSink: ((String) -> Void)? = nil
     ) {
         self.subjectId = subjectId
         self.subjectType = subjectType
         self.channels = channels
         self.logger = ConsentIQLogger(debugEnabled: debug, sink: logSink)
-        self.apiClient = ConsentIQAPIClient(propertyKey: propertyKey, apiURL: apiURL, session: session, logger: logger)
+        var apiClient = ConsentIQAPIClient(propertyKey: propertyKey, apiURL: apiURL, session: session, logger: logger)
+        apiClient.attestor = appAttestorFactory(apiClient)
+        self.apiClient = apiClient
         self.onConsentSubmitted = onConsentSubmitted
         self.onConsentChange = onConsentChange
         self.consentIQ = consentIQ
@@ -103,7 +106,8 @@ public final class FormConsent: ObservableObject {
             onConsentSubmitted: onConsentSubmitted,
             onConsentChange: onConsentChange,
             consentIQ: consentIQ,
-            captchaProviderFactory: consentIQ.captchaProviderFactory
+            captchaProviderFactory: consentIQ.captchaProviderFactory,
+            appAttestorFactory: consentIQ.appAttestorFactory
         )
         self.identityToken = identityToken
     }

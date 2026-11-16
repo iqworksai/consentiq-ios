@@ -15,5 +15,5 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = '16.0'
   s.swift_versions   = ['5.9']
   s.source_files     = 'Sources/ConsentIQ/**/*.swift'
-  s.frameworks       = 'Foundation', 'SwiftUI', 'UIKit', 'Combine', 'WebKit'
+  s.frameworks       = 'Foundation', 'SwiftUI', 'UIKit', 'Combine', 'WebKit', 'DeviceCheck', 'CryptoKit'
 end

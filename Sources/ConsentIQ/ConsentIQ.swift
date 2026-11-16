@@ -28,6 +28,7 @@ public final class ConsentIQ: ObservableObject {
 
     let storage: ConsentStorage
     let captchaProviderFactory: CaptchaProviderFactory
+    let appAttestorFactory: AppAttestorFactory
     let tcfPageFactory: TcfPageFactory
     let tcfKeys = TcfKeyStore()
     var logSink: ((String) -> Void)?
@@ -61,11 +62,13 @@ public final class ConsentIQ: ObservableObject {
         storage: ConsentStorage,
         urlSessionConfiguration: URLSessionConfiguration,
         captchaProviderFactory: @escaping CaptchaProviderFactory,
+        appAttestorFactory: @escaping AppAttestorFactory = defaultAppAttestorFactory,
         tcfPageFactory: @escaping TcfPageFactory = { makeDefaultTcfPage(pageURL: $0, presenter: $1) }
     ) {
         self.storage = storage
         self.sessionConfiguration = urlSessionConfiguration
         self.captchaProviderFactory = captchaProviderFactory
+        self.appAttestorFactory = appAttestorFactory
         self.tcfPageFactory = tcfPageFactory
     }
 
@@ -79,12 +82,13 @@ public final class ConsentIQ: ObservableObject {
     public func initialize(_ config: ConsentIQConfig) async {
         configuration = config
         logger = ConsentIQLogger(debugEnabled: config.debug, sink: logSink)
-        let client = ConsentIQAPIClient(
+        var client = ConsentIQAPIClient(
             propertyKey: config.propertyKey,
             apiURL: config.apiURL,
             session: URLSession(configuration: sessionConfiguration),
             logger: logger
         )
+        client.attestor = appAttestorFactory(client)
         apiClient = client
         isLoading = true
         endTcfSession()

@@ -236,6 +236,13 @@ sent, local state is kept (`FormConsent.submit()` returns `nil`), and the SDK lo
 
 List Cloudflare Turnstile in your app's privacy disclosures.
 
+**App Attest.** Each submission proves it comes from your app with Apple's App Attest: once per
+install the SDK generates a key and registers it with ConsentIQ, then signs each submission's body.
+Enter your Team ID and bundle ID in the property's settings, and add the App Attest capability to
+your app target (entitlement `com.apple.developer.devicecheck.appattest-environment`, `production`
+for App Store builds). Where App Attest is unavailable, such as the simulator, nothing is signed
+and ConsentIQ asks for the captcha above instead.
+
 **Geo.** The applicable regulation is resolved on the server from the request's network location.
 The SDK does not send device location.
 
