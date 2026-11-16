@@ -6,8 +6,8 @@
   when a submission looks automated, the SDK solves one Cloudflare Turnstile challenge and sends
   the submission once more. `FormConsent.submit()` does the same.
 - The captcha page is loaded with the property key, so a token is accepted only for that property.
-- A challenge that has not finished within 3 seconds, or that asks for interaction, is shown over
-  the app with a Cancel button. Once shown it waits up to 2 minutes. Cancelling, a failure or a
+- A challenge stays hidden unless Cloudflare asks for interaction; then it is shown over the app
+  with a Cancel button. Once shown it waits up to 2 minutes. Cancelling, a failure or a
   timeout sends nothing more, keeps local state and logs the usual captcha warning.
 - App Attest: once per install and property the SDK generates an App Attest key and registers it
   with ConsentIQ, then sends `X-ConsentIQ-Attest-Key` and `X-ConsentIQ-Assertion`, an assertion over
@@ -18,6 +18,11 @@
   captcha; it is dropped once recorded, after three attempts, or after seven days. A `400`, `404`,
   `409` or `422` answer drops it. A `403` (an identity token that did not verify, or one the property
   requires) goes to `ConsentIQConfig.onError` and is not retried.
+  It is resent only for the same subject id, property and API URL; a newer decision replaces it; a
+  newer record on ConsentIQ wins over it; and a `429` that arrives after `resetConsent()` is ignored.
+- App Attest keys are kept per API URL and property. A property without app identifiers (`409`)
+  is retried after three days, and a key challenged on three attested submissions in a row is
+  registered again.
 - `ConsentIQConfig.identityToken`, `FormConsent.identityToken` and `ConsentSubmission.identityToken`
   send your server's signature for the person with each submission, unread by the SDK.
 - IAB TCF in-app support. When a property has TCF turned on and ConsentIQ's CMP ID is issued, the

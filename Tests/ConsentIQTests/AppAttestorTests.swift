@@ -54,21 +54,31 @@ final class AppAttestorTests: XCTestCase {
     private final class Calls: @unchecked Sendable {
         var challenges = 0
         var registrations: [Registration] = []
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
     }
 
-    private func makeAttestor(_ service: FakeAppAttestService, registers: Bool = true, calls: Calls) -> AppAttestor {
+    private func makeAttestor(
+        _ service: FakeAppAttestService,
+        registers: Bool = true,
+        status: Int? = nil,
+        apiURL: String = Fixtures.apiURL.absoluteString,
+        calls: Calls
+    ) -> AppAttestor {
         let challenge = challengeBytes
+        let answer = status ?? (registers ? 204 : 403)
         return AppAttestor(
             service: service,
             defaults: defaults,
+            apiURL: apiURL,
             propertyKey: Fixtures.propertyKey,
+            now: { calls.now },
             challenge: {
                 calls.challenges += 1
                 return challenge
             },
             register: { keyId, attestation, challenge in
                 calls.registrations.append(Registration(keyId: keyId, attestation: attestation, challenge: challenge))
-                return registers
+                return answer
             }
         )
     }
@@ -158,6 +168,56 @@ final class AppAttestorTests: XCTestCase {
         XCTAssertEqual(replaced["X-ConsentIQ-Attest-Key"], "key-2")
     }
 
+    func testAKeyBelongsToOneServer() async {
+        let service = FakeAppAttestService()
+        let calls = Calls()
+        _ = await makeAttestor(service, calls: calls).headers(for: Data())
+        service.keyId = "key-2"
+
+        let production = await makeAttestor(service, apiURL: "https://prod.example.test", calls: calls).headers(for: Data())
+
+        XCTAssertEqual(production["X-ConsentIQ-Attest-Key"], "key-2")
+        XCTAssertEqual(calls.registrations.count, 2)
+    }
+
+    func testAnUnconfiguredAppWaitsDaysBeforeTryingToRegisterAgain() async {
+        let service = FakeAppAttestService()
+        let calls = Calls()
+        _ = await makeAttestor(service, status: 409, calls: calls).headers(for: Data())
+
+        calls.now = calls.now.addingTimeInterval(24 * 60 * 60)
+        let nextDay = await makeAttestor(service, calls: calls).headers(for: Data())
+        XCTAssertEqual(nextDay, [:])
+        XCTAssertEqual(calls.registrations.count, 1)
+        XCTAssertEqual(service.generatedKeys, 1)
+
+        calls.now = calls.now.addingTimeInterval(3 * 24 * 60 * 60)
+        let later = await makeAttestor(service, calls: calls).headers(for: Data())
+        XCTAssertEqual(later["X-ConsentIQ-Attest-Key"], "key-1")
+        XCTAssertEqual(calls.registrations.count, 2)
+    }
+
+    func testAKeyChallengedThreeTimesInARowIsRegisteredAgain() async {
+        let service = FakeAppAttestService()
+        let calls = Calls()
+        let attestor = makeAttestor(service, calls: calls)
+        _ = await attestor.headers(for: Data())
+
+        await attestor.attestedRequestWasChallenged()
+        await attestor.attestedRequestWasChallenged()
+        await attestor.attestedRequestWasAccepted()
+        await attestor.attestedRequestWasChallenged()
+        await attestor.attestedRequestWasChallenged()
+        _ = await makeAttestor(service, calls: calls).headers(for: Data())
+        XCTAssertEqual(calls.registrations.count, 1, "an acceptance resets the count")
+
+        await attestor.attestedRequestWasChallenged()
+        service.keyId = "key-2"
+        let replaced = await makeAttestor(service, calls: calls).headers(for: Data())
+        XCTAssertEqual(replaced["X-ConsentIQ-Attest-Key"], "key-2")
+        XCTAssertEqual(calls.registrations.count, 2)
+    }
+
     func testDecodesTheServersBase64URLChallenge() {
         XCTAssertEqual(decodeBase64URL("AQID-g"), challengeBytes)
         XCTAssertEqual(challengeBytes.base64URLEncodedString(), "AQID-g")
@@ -198,6 +258,7 @@ final class AppAttestationSubmitTests: XCTestCase {
                 AppAttestor(
                     service: service,
                     defaults: defaults,
+                    apiURL: client.apiURL.absoluteString,
                     propertyKey: client.propertyKey,
                     challenge: { try await client.appAttestChallenge() },
                     register: { try await client.registerAppAttestKey(keyId: $0, attestation: $1, challenge: $2) }
@@ -212,6 +273,12 @@ final class AppAttestationSubmitTests: XCTestCase {
         XCTAssertEqual(register["keyId"] as? String, "key-1")
         XCTAssertEqual(register["challenge"] as? String, "AQID-g")
         XCTAssertEqual(register["propertyKey"] as? String, Fixtures.propertyKey)
+        // The contract's vector: clientDataHash is SHA-256 of the decoded challenge bytes (01 02 03 FA),
+        // never of its base64url text, which is what the server hashes too.
+        XCTAssertEqual(
+            service.attestHashes.first.map { $0.map { String(format: "%02x", $0) }.joined() },
+            "bacdef9c76b37eb70caaf81ea41ecddd56d625b72e453de5eabbd59745279847"
+        )
         let post = try XCTUnwrap(StubURLProtocol.requests(matching: "POST", Fixtures.consentPath).first)
         XCTAssertEqual(post.headers["X-ConsentIQ-Attest-Key"], "key-1")
         XCTAssertNotNil(post.headers["X-ConsentIQ-Assertion"])

@@ -53,12 +53,17 @@ public struct ConsentIQAPIClient: Sendable {
         logger.debug("Submitting consent via \(body.consentMethod.rawValue)")
         let payload = try JSONEncoder().encode(body)
         let headers = await attestor?.headers(for: payload) ?? [:]
-        let result: ConsentSubmissionResult = try await request(
-            path: "/api/public/consent",
-            method: "POST",
-            body: payload,
-            headers: headers
-        )
+        let result: ConsentSubmissionResult
+        do {
+            result = try await request(path: "/api/public/consent", method: "POST", body: payload, headers: headers)
+        } catch let error as ConsentIQAPIError where error.statusCode == 428 && !headers.isEmpty {
+            // Challenged although this request carried a proof: the server may no longer know the key.
+            await attestor?.attestedRequestWasChallenged()
+            throw error
+        }
+        if !headers.isEmpty {
+            await attestor?.attestedRequestWasAccepted()
+        }
         logger.debug("Consent submitted")
         return result
     }
@@ -77,8 +82,8 @@ public struct ConsentIQAPIClient: Sendable {
         return bytes
     }
 
-    /// True once ConsentIQ has registered the key (204); any other answer leaves it unregistered.
-    func registerAppAttestKey(keyId: String, attestation: Data, challenge: Data) async throws -> Bool {
+    /// The HTTP status of the registration: 204 registered it; anything else leaves it unregistered.
+    func registerAppAttestKey(keyId: String, attestation: Data, challenge: Data) async throws -> Int {
         let body = try JSONEncoder().encode([
             "propertyKey": propertyKey,
             "keyId": keyId,
@@ -86,7 +91,7 @@ public struct ConsentIQAPIClient: Sendable {
             "challenge": challenge.base64URLEncodedString(),
         ])
         let (_, http) = try await send(path: "/api/public/app-attest/register", method: "POST", body: body)
-        return http.statusCode == 204
+        return http.statusCode
     }
 
     private func request<Response: Decodable>(

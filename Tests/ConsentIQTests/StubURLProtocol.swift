@@ -19,10 +19,12 @@ struct RecordedRequest {
 struct StubResponse {
     let status: Int
     let body: Data
+    var delay: TimeInterval = 0
 
-    init(status: Int = 200, json: String) {
+    init(status: Int = 200, json: String, delay: TimeInterval = 0) {
         self.status = status
         self.body = Data(json.utf8)
+        self.delay = delay
     }
 
     init(status: Int, data: Data) {
@@ -112,9 +114,16 @@ final class StubURLProtocol: URLProtocol {
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]
         )!
-        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: response.body)
-        client?.urlProtocolDidFinishLoading(self)
+        let respond = { [self] in
+            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: response.body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if response.delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + response.delay, execute: respond)
+        } else {
+            respond()
+        }
     }
 
     override func stopLoading() {}

@@ -166,6 +166,8 @@ Every write updates local state first, posts to ConsentIQ, persists the cache, t
 `429 Too many requests`, the decision is kept and sent once more on each of the next launches,
 without a captcha, until it is recorded, three attempts have been made, or seven days have passed.
 A `400`, `404`, `409` or `422` answer drops it, and a `403` is passed to `onError` and not retried.
+It is resent only for the same subject id, property and API URL, a newer decision replaces it, and
+a newer record on ConsentIQ for that person wins over it.
 
 `FormConsent` mirrors the marketing consent form helper: `toggle(_:)`, `set(_:_:)`, `submit()`
 (posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`. Set

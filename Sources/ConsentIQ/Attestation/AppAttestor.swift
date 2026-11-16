@@ -49,27 +49,51 @@ func makeDefaultAppAttestService() -> (any AppAttestService)? {
 actor AppAttestor {
     static let keyHeader = "X-ConsentIQ-Attest-Key"
     static let assertionHeader = "X-ConsentIQ-Assertion"
+    /// After a 409 (the property has no app identifiers yet) registration waits this long.
+    static let notConfiguredBackoff: TimeInterval = 3 * 24 * 60 * 60
+    /// Attested requests challenged in a row before the key is treated as unknown to the server.
+    static let challengesBeforeReregistering = 3
 
     private let service: any AppAttestService
     private let defaults: UserDefaults
     private let storageKey: String
+    private let backoffKey: String
     private let challenge: @Sendable () async throws -> Data
-    private let register: @Sendable (_ keyId: String, _ attestation: Data, _ challenge: Data) async throws -> Bool
+    private let register: @Sendable (_ keyId: String, _ attestation: Data, _ challenge: Data) async throws -> Int
+    private let now: @Sendable () -> Date
     private var registering: Task<String?, Never>?
     private var gaveUpThisLaunch = false
+    private var challengedInARow = 0
 
     init(
         service: any AppAttestService,
         defaults: UserDefaults,
+        apiURL: String,
         propertyKey: String,
+        now: @escaping @Sendable () -> Date = Date.init,
         challenge: @escaping @Sendable () async throws -> Data,
-        register: @escaping @Sendable (_ keyId: String, _ attestation: Data, _ challenge: Data) async throws -> Bool
+        register: @escaping @Sendable (_ keyId: String, _ attestation: Data, _ challenge: Data) async throws -> Int
     ) {
         self.service = service
         self.defaults = defaults
-        self.storageKey = "consentiq_app_attest_key_\(propertyKey)"
+        // A key belongs to one server and property: one registered on staging means nothing to production.
+        let scope = "\(apiURL)|\(propertyKey)"
+        self.storageKey = "consentiq_app_attest_key_\(scope)"
+        self.backoffKey = "consentiq_app_attest_backoff_\(scope)"
         self.challenge = challenge
         self.register = register
+        self.now = now
+    }
+
+    func attestedRequestWasAccepted() {
+        challengedInARow = 0
+    }
+
+    func attestedRequestWasChallenged() {
+        challengedInARow += 1
+        guard challengedInARow >= Self.challengesBeforeReregistering else { return }
+        challengedInARow = 0
+        defaults.removeObject(forKey: storageKey)
     }
 
     func headers(for body: Data) async -> [String: String] {
@@ -88,6 +112,7 @@ actor AppAttestor {
     private func registeredKey() async -> String? {
         if let stored = defaults.string(forKey: storageKey) { return stored }
         if gaveUpThisLaunch { return nil }
+        if let until = defaults.object(forKey: backoffKey) as? Date, until > now() { return nil }
         if let registering { return await registering.value }
         let task = Task { await registerNewKey() }
         registering = task
@@ -106,7 +131,16 @@ actor AppAttestor {
             let keyId = try await service.generateKey()
             let challengeBytes = try await challenge()
             let attestation = try await service.attestKey(keyId, clientDataHash: Data(SHA256.hash(data: challengeBytes)))
-            return try await register(keyId, attestation, challengeBytes) ? keyId : nil
+            switch try await register(keyId, attestation, challengeBytes) {
+            case 204:
+                defaults.removeObject(forKey: backoffKey)
+                return keyId
+            case 409:
+                defaults.set(now().addingTimeInterval(Self.notConfiguredBackoff), forKey: backoffKey)
+                return nil
+            default:
+                return nil
+            }
         } catch {
             return nil
         }
@@ -125,6 +159,7 @@ actor AppAttestor {
             AppAttestor(
                 service: service,
                 defaults: defaults,
+                apiURL: client.apiURL.absoluteString,
                 propertyKey: client.propertyKey,
                 challenge: { try await client.appAttestChallenge() },
                 register: { try await client.registerAppAttestKey(keyId: $0, attestation: $1, challenge: $2) }

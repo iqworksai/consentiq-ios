@@ -40,7 +40,7 @@ final class PendingDecisionTests: XCTestCase {
         StubURLProtocol.requests(matching: "POST", Fixtures.consentPath)
     }
 
-    private func launch(at date: Date = Date()) async -> ConsentIQ {
+    private func launch(at date: Date = Date(), subjectId: String? = nil, apiURL: URL = Fixtures.apiURL) async -> ConsentIQ {
         let sdk = ConsentIQ(
             storage: storage,
             urlSessionConfiguration: StubURLProtocol.sessionConfiguration,
@@ -50,7 +50,8 @@ final class PendingDecisionTests: XCTestCase {
         sdk.now = { date }
         await sdk.initialize(ConsentIQConfig(
             propertyKey: Fixtures.propertyKey,
-            apiURL: Fixtures.apiURL,
+            apiURL: apiURL,
+            subjectId: subjectId,
             autoShow: false,
             onConsentChange: { [weak self] _, _ in self?.changes += 1 },
             onError: { [weak self] in self?.errors.append($0) }
@@ -150,6 +151,93 @@ final class PendingDecisionTests: XCTestCase {
         await launch().acceptAll()
 
         XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testAPendingDecisionIsNeverSentForSomeoneElse() async {
+        refuse(429)
+        await launch(subjectId: "user-a").acceptAll()
+        XCTAssertNotNil(storage.loadPendingDecision())
+
+        accept()
+        _ = await launch(subjectId: "user-b")
+
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testAPendingDecisionIsNeverSentToAnotherServer() async {
+        refuse(429)
+        await launch(subjectId: "user-a").acceptAll()
+
+        accept()
+        _ = await launch(subjectId: "user-a", apiURL: URL(string: "https://staging.example.test")!)
+
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testANewDecisionReplacesOneStillWaiting() async {
+        refuse(429)
+        let sdk = await launch()
+        await sdk.acceptAll()
+        XCTAssertNotNil(storage.loadPendingDecision())
+
+        refuse(500)
+        await sdk.rejectAll()
+
+        XCTAssertNil(storage.loadPendingDecision())
+        accept()
+        _ = await launch()
+        XCTAssertEqual(posts.count, 2)
+    }
+
+    func testANewerRecordOnTheServerWinsOverTheWaitingDecision() async {
+        let decidedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        refuse(429)
+        await launch(at: decidedAt, subjectId: "user-a").acceptAll()
+
+        accept()
+        StubURLProtocol.stub("GET", Fixtures.consentLookupPath("user-a"), StubResponse(json: Fixtures.savedConsentJSON))
+        _ = await launch(at: decidedAt.addingTimeInterval(60), subjectId: "user-a")
+
+        XCTAssertEqual(posts.count, 1, "the record dated 2026-01-01 is newer than the decision")
+        XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testAnOlderRecordOnTheServerDoesNotStopTheResend() async {
+        let decidedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        refuse(429)
+        await launch(at: decidedAt, subjectId: "user-a").acceptAll()
+
+        accept()
+        StubURLProtocol.stub("GET", Fixtures.consentLookupPath("user-a"), StubResponse(json: Fixtures.savedConsentJSON))
+        _ = await launch(at: decidedAt.addingTimeInterval(60), subjectId: "user-a")
+
+        XCTAssertEqual(posts.count, 2)
+        XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testATooManyRequestsAnswerThatArrivesAfterAResetIsIgnored() async throws {
+        let sdk = await launch()
+        StubURLProtocol.stub("POST", Fixtures.consentPath, StubResponse(status: 429, json: #"{"error":"Too many requests"}"#, delay: 0.3))
+        let submit = Task { await sdk.acceptAll() }
+        var spins = 0
+        while posts.isEmpty, spins < 10_000 {
+            await Task.yield()
+            spins += 1
+        }
+        XCTAssertEqual(posts.count, 1, "the submit is in flight")
+        sdk.resetConsent()
+        await submit.value
+
+        XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testAStoredDecisionFromAnOlderVersionIsDiscarded() {
+        let olderFormat = #"{"cookieConsents":{},"marketingConsents":{},"attempts":0,"createdAt":0}"#
+        defaults.set(Data(olderFormat.utf8), forKey: ConsentStorage.pendingKey)
+        XCTAssertNil(storage.loadPendingDecision())
+        XCTAssertNil(defaults.data(forKey: ConsentStorage.pendingKey))
     }
 
     func testClearAllForgetsAPendingDecision() async {

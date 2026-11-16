@@ -61,7 +61,11 @@ public final class ConsentStorage: @unchecked Sendable {
 
     func loadPendingDecision() -> PendingDecision? {
         guard let data = defaults.data(forKey: Self.pendingKey) else { return nil }
-        return try? JSONDecoder().decode(PendingDecision.self, from: data)
+        guard let pending = try? JSONDecoder().decode(PendingDecision.self, from: data) else {
+            clearPendingDecision()
+            return nil
+        }
+        return pending
     }
 
     func savePendingDecision(_ pending: PendingDecision) {
@@ -94,9 +98,17 @@ struct PendingDecision: Codable, Equatable {
     var marketingConsents: MarketingConsentState
     var attempts: Int
     var createdAt: Date
+    // Whose decision it is and where it goes: resent only to the same person, property and server.
+    var subjectId: String
+    var propertyKey: String
+    var apiURL: String
 
     func isSpent(at now: Date) -> Bool {
         attempts >= Self.maxAttempts || now.timeIntervalSince(createdAt) > Self.maxAge
+    }
+
+    func belongs(to subjectId: String, propertyKey: String, apiURL: String) -> Bool {
+        self.subjectId == subjectId && self.propertyKey == propertyKey && self.apiURL == apiURL
     }
 }
 

@@ -7,8 +7,6 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding, ScriptMessa
     nonisolated static let pagePath = "/api/public/captcha/mobile"
     static let messageHandlerName = HostedPage.messageHandlerName
     static let timeoutNanoseconds: UInt64 = 15_000_000_000
-    // Turnstile signals nothing when it wants a click, so a token this late is taken to need one.
-    static let revealDelayNanoseconds: UInt64 = 3_000_000_000
     static let interactionTimeoutNanoseconds: UInt64 = 120_000_000_000
 
     private static var providers: [URL: WebViewCaptchaProvider] = [:]
@@ -54,7 +52,6 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding, ScriptMessa
     private var pageState = PageState.idle
     private var pending: PendingRequest?
     private var timeoutTask: Task<Void, Never>?
-    private var revealTask: Task<Void, Never>?
     private var overlay: UIView?
     private var lastRequestId = 0
     private var isBusy = false
@@ -144,11 +141,7 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding, ScriptMessa
         request.executed = true
         pending = request
         let id = request.id
-        revealTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.revealDelayNanoseconds)
-            guard !Task.isCancelled else { return }
-            self?.reveal(id)
-        }
+        // The challenge stays hidden until the page posts `interactive`: only then does Cloudflare need a click.
         // The trailing `true` keeps the result serializable; an undefined result is reported as an error.
         webView.evaluateJavaScript("window.consentiqExecute(); true") { [weak self] _, error in
             guard error != nil else { return }
@@ -169,8 +162,6 @@ final class WebViewCaptchaProvider: NSObject, CaptchaTokenProviding, ScriptMessa
         pending = nil
         timeoutTask?.cancel()
         timeoutTask = nil
-        revealTask?.cancel()
-        revealTask = nil
         conceal()
         request.continuation.resume(with: result)
     }

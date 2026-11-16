@@ -47,6 +47,10 @@ public final class ConsentIQ: ObservableObject {
     private var apiClient: ConsentIQAPIClient?
     private var captchaProvider: (any CaptchaTokenProviding)?
     private var hasWarnedAboutCaptcha = false
+    // Bumped by resetConsent, so a submit that started before a reset cannot store its 429 after it.
+    private var resetGeneration = 0
+    // When the server's own record for this person was made, from the last lookup.
+    private var serverConsentedAt: Date?
 
     public nonisolated convenience init(
         storage: ConsentStorage = ConsentStorage(),
@@ -221,6 +225,7 @@ public final class ConsentIQ: ObservableObject {
         consent = ConsentIQ.defaultConsent
         marketingConsent = [:]
         storage.clearAll()
+        resetGeneration += 1
         tcfKeys.clearDecision()
         if let configuration {
             subjectId = resolveSubjectId(configuration)
@@ -256,6 +261,7 @@ public final class ConsentIQ: ObservableObject {
             lookup = nil
         }
 
+        serverConsentedAt = lookup?.consent.flatMap { Self.parseTimestamp($0.consentedAt) }
         if let saved = lookup?.consent {
             consent = saved.cookieConsents.forcingNecessary()
             if let marketing = saved.marketingConsents {
@@ -314,6 +320,9 @@ public final class ConsentIQ: ObservableObject {
             logger.debug("Skipping consent submit: no subject id")
             return
         }
+        // A new decision replaces any earlier one still waiting to be resent.
+        storage.clearPendingDecision()
+        let generation = resetGeneration
         let captchaToken: String?
         do {
             captchaToken = try await self.captchaToken()
@@ -343,7 +352,13 @@ public final class ConsentIQ: ObservableObject {
             logger.warning(ConsentIQLogger.captchaFailedWarning)
         } catch let error as ConsentIQAPIError {
             logger.error("Failed to submit consent: \(error.localizedDescription)")
-            handleRefusal(error, cookieConsents: cookieConsents, marketingConsents: marketingConsents)
+            handleRefusal(
+                error,
+                cookieConsents: cookieConsents,
+                marketingConsents: marketingConsents,
+                subjectId: subjectId,
+                generation: generation
+            )
         } catch {
             logger.error("Failed to submit consent: \(error.localizedDescription)")
         }
@@ -351,14 +366,24 @@ public final class ConsentIQ: ObservableObject {
 
     // 429 keeps the decision for one quiet retry per launch; a refusal resending cannot change drops
     // it; 403 (an identity token that did not verify, or one the property requires) goes to the app.
-    private func handleRefusal(_ error: ConsentIQAPIError, cookieConsents: ConsentState, marketingConsents: MarketingConsentState) {
+    private func handleRefusal(
+        _ error: ConsentIQAPIError,
+        cookieConsents: ConsentState,
+        marketingConsents: MarketingConsentState,
+        subjectId: String,
+        generation: Int
+    ) {
         switch error.statusCode {
         case 429 where config?.requiresCaptchaToken != true:
+            guard generation == resetGeneration, let configuration else { return }
             storage.savePendingDecision(PendingDecision(
                 cookieConsents: cookieConsents,
                 marketingConsents: marketingConsents,
                 attempts: 0,
-                createdAt: now()
+                createdAt: now(),
+                subjectId: subjectId,
+                propertyKey: configuration.propertyKey,
+                apiURL: configuration.apiURL.absoluteString
             ))
         case 403:
             storage.clearPendingDecision()
@@ -374,7 +399,12 @@ public final class ConsentIQ: ObservableObject {
     /// was recorded, so the sheet need not ask again.
     private func resendPendingDecision(client: ConsentIQAPIClient, subjectId: String) async -> Bool {
         guard var pending = storage.loadPendingDecision() else { return false }
-        if pending.isSpent(at: now()) || config?.requiresCaptchaToken == true {
+        let owned = configuration.map {
+            pending.belongs(to: subjectId, propertyKey: $0.propertyKey, apiURL: $0.apiURL.absoluteString)
+        } ?? false
+        // A record the server made after this decision is the newer choice, so it wins.
+        let superseded = serverConsentedAt.map { $0 > pending.createdAt } ?? false
+        if !owned || superseded || pending.isSpent(at: now()) || config?.requiresCaptchaToken == true {
             storage.clearPendingDecision()
             return false
         }
@@ -408,5 +438,11 @@ public final class ConsentIQ: ObservableObject {
         storage.saveConsent(consent)
         configuration?.onConsentChange?(consent, marketingConsent)
         return true
+    }
+
+    static func parseTimestamp(_ value: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return withFraction.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 }
