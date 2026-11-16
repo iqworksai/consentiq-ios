@@ -41,6 +41,7 @@ public final class ConsentIQ: ObservableObject {
     var tcfTask: Task<Void, Never>?
     var tcfRun = 0
     var hasExistingConsent = false
+    var now: () -> Date = Date.init
 
     private let sessionConfiguration: URLSessionConfiguration
     private var apiClient: ConsentIQAPIClient?
@@ -108,6 +109,9 @@ public final class ConsentIQ: ObservableObject {
             var foundExistingConsent = false
             if let subjectId {
                 foundExistingConsent = await restoreConsent(client: client, subjectId: subjectId)
+                if await resendPendingDecision(client: client, subjectId: subjectId) {
+                    foundExistingConsent = true
+                }
             }
             hasExistingConsent = foundExistingConsent
 
@@ -331,13 +335,78 @@ public final class ConsentIQ: ObservableObject {
                     identityToken: identityToken
                 ))
             }
+            storage.clearPendingDecision()
             storage.saveConsent(cookieConsents)
             configuration?.onConsentChange?(cookieConsents, marketingConsents)
         } catch let error as CaptchaError {
             logger.debug("Captcha token unavailable: \(error)")
             logger.warning(ConsentIQLogger.captchaFailedWarning)
+        } catch let error as ConsentIQAPIError {
+            logger.error("Failed to submit consent: \(error.localizedDescription)")
+            handleRefusal(error, cookieConsents: cookieConsents, marketingConsents: marketingConsents)
         } catch {
             logger.error("Failed to submit consent: \(error.localizedDescription)")
         }
+    }
+
+    // 429 keeps the decision for one quiet retry per launch; a refusal resending cannot change drops
+    // it; 403 (an identity token that did not verify, or one the property requires) goes to the app.
+    private func handleRefusal(_ error: ConsentIQAPIError, cookieConsents: ConsentState, marketingConsents: MarketingConsentState) {
+        switch error.statusCode {
+        case 429 where config?.requiresCaptchaToken != true:
+            storage.savePendingDecision(PendingDecision(
+                cookieConsents: cookieConsents,
+                marketingConsents: marketingConsents,
+                attempts: 0,
+                createdAt: now()
+            ))
+        case 403:
+            storage.clearPendingDecision()
+            configuration?.onError?(error)
+        default:
+            if error.dropsTheDecision {
+                storage.clearPendingDecision()
+            }
+        }
+    }
+
+    /// Resends a decision kept after a 429, once per launch and never with a captcha. True when it
+    /// was recorded, so the sheet need not ask again.
+    private func resendPendingDecision(client: ConsentIQAPIClient, subjectId: String) async -> Bool {
+        guard var pending = storage.loadPendingDecision() else { return false }
+        if pending.isSpent(at: now()) || config?.requiresCaptchaToken == true {
+            storage.clearPendingDecision()
+            return false
+        }
+        pending.attempts += 1
+        storage.savePendingDecision(pending)
+        do {
+            _ = try await client.submitConsent(ConsentSubmission(
+                propertyKey: client.propertyKey,
+                subjectId: subjectId,
+                cookieConsents: pending.cookieConsents,
+                marketingConsents: pending.marketingConsents,
+                consentMethod: .sdk,
+                identityToken: configuration?.identityToken
+            ))
+        } catch let error as ConsentIQAPIError {
+            logger.debug("Pending consent not recorded: \(error.localizedDescription)")
+            if error.statusCode == 403 {
+                storage.clearPendingDecision()
+                configuration?.onError?(error)
+            } else if error.dropsTheDecision {
+                storage.clearPendingDecision()
+            }
+            return false
+        } catch {
+            logger.debug("Pending consent not recorded: \(error.localizedDescription)")
+            return false
+        }
+        storage.clearPendingDecision()
+        consent = pending.cookieConsents.forcingNecessary()
+        marketingConsent = pending.marketingConsents
+        storage.saveConsent(consent)
+        configuration?.onConsentChange?(consent, marketingConsent)
+        return true
     }
 }

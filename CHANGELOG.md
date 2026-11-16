@@ -14,6 +14,10 @@
   the exact request body, with every submission. Where App Attest is unsupported, or registration
   fails, nothing is sent and ConsentIQ asks for a captcha instead; a refused key is replaced on the
   next launch. Apps add the App Attest capability. The podspec links DeviceCheck and CryptoKit.
+- A submission ConsentIQ answers with `429` is kept and sent once more on the next launch, without a
+  captcha; it is dropped once recorded, after three attempts, or after seven days. A `400`, `404`,
+  `409` or `422` answer drops it. A `403` (an identity token that did not verify, or one the property
+  requires) goes to `ConsentIQConfig.onError` and is not retried.
 - `ConsentIQConfig.identityToken`, `FormConsent.identityToken` and `ConsentSubmission.identityToken`
   send your server's signature for the person with each submission, unread by the SDK.
 - IAB TCF in-app support. When a property has TCF turned on and ConsentIQ's CMP ID is issued, the

@@ -142,7 +142,7 @@ of the same app use the iOS key.
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |
 | `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq`. Turn it on in debug builds only |
 | `identityToken` | `nil` | Your server's signature for this person, sent with every submission. ConsentIQ verifies it and marks the record verified by your organization. Sign on your server, never in the app |
-| `onError` | `nil` | Called when the SDK recovers from a failure; today, a TCF screen that could not load or answer |
+| `onError` | `nil` | Called when the SDK recovers from a failure: a TCF screen that could not load or answer, or a submission ConsentIQ refused with 403 (an identity token that did not verify, or one the property requires) |
 
 `ConsentIQ` (`@MainActor`, `ObservableObject`, use `ConsentIQ.shared`)
 
@@ -162,7 +162,10 @@ of the same app use the iOS key.
 | `presentSheet(from:)`, `presentPrivacyChoices(from:)` | UIKit presentation of the same choices |
 
 Every write updates local state first, posts to ConsentIQ, persists the cache, then calls
-`onConsentChange`. A failed post is logged and local state is kept.
+`onConsentChange`. A failed post is logged and local state is kept. When ConsentIQ answers
+`429 Too many requests`, the decision is kept and sent once more on each of the next launches,
+without a captcha, until it is recorded, three attempts have been made, or seven days have passed.
+A `400`, `404`, `409` or `422` answer drops it, and a `403` is passed to `onError` and not retried.
 
 `FormConsent` mirrors the marketing consent form helper: `toggle(_:)`, `set(_:_:)`, `submit()`
 (posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`. Set
