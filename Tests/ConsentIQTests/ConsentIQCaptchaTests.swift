@@ -77,6 +77,105 @@ final class ConsentIQCaptchaTests: XCTestCase {
         XCTAssertFalse(logLines.contains { $0.localizedCaseInsensitiveContains("captcha") }, "\(logLines)")
     }
 
+    private let challenge = StubResponse(status: 428, json: #"{"error":"captcha_required"}"#)
+
+    func testBindsThePageToThePropertyKey() async {
+        stubConfig(Fixtures.captchaConfigJSON)
+        let sdk = makeSDK()
+
+        await sdk.initialize(config())
+
+        XCTAssertEqual(captcha.requestedPropertyKeys, [Fixtures.propertyKey])
+    }
+
+    func testAnswersAChallengeOnceAndRecordsTheConsent() async throws {
+        stubConfig(Fixtures.configJSON())
+        StubURLProtocol.stubSequence("POST", Fixtures.consentPath, [challenge, StubResponse(json: Fixtures.submitResultJSON)])
+        var changes = 0
+        let sdk = makeSDK()
+        await sdk.initialize(config(onConsentChange: { _, _ in changes += 1 }))
+
+        await sdk.acceptAll()
+
+        XCTAssertEqual(posts.count, 2)
+        XCTAssertNil(posts[0].json?["captchaToken"])
+        XCTAssertEqual(posts[1].json?["captchaToken"] as? String, "tok")
+        XCTAssertEqual(captcha.requestedPropertyKeys, [Fixtures.propertyKey])
+        XCTAssertEqual(captcha.tokenCount, 1)
+        XCTAssertEqual(changes, 1)
+        XCTAssertNotNil(storage.loadConsent())
+    }
+
+    func testRetriesOnlyOnce() async {
+        stubConfig(Fixtures.configJSON())
+        StubURLProtocol.stub("POST", Fixtures.consentPath, challenge)
+        var changes = 0
+        let sdk = makeSDK()
+        await sdk.initialize(config(onConsentChange: { _, _ in changes += 1 }))
+
+        await sdk.acceptAll()
+
+        XCTAssertEqual(posts.count, 2)
+        XCTAssertEqual(captcha.tokenCount, 1)
+        XCTAssertEqual(changes, 0)
+        XCTAssertNil(storage.loadConsent())
+    }
+
+    func testACancelledOrTimedOutChallengeSendsNothingMore() async {
+        for failure in [CaptchaError.cancelled, CaptchaError.timedOut] {
+            StubURLProtocol.reset()
+            StubURLProtocol.stubFallback(StubResponse(json: Fixtures.noConsentJSON))
+            stubConfig(Fixtures.configJSON())
+            StubURLProtocol.stub("POST", Fixtures.consentPath, challenge)
+            captcha.result = .failure(failure)
+            logLines = []
+            let sdk = makeSDK()
+            await sdk.initialize(config())
+
+            await sdk.acceptAll()
+
+            XCTAssertEqual(posts.count, 1, "\(failure)")
+            XCTAssertNil(storage.loadConsent(), "\(failure)")
+            XCTAssertEqual(logLines.filter { $0 == "[ConsentIQ] Captcha check failed; consent not submitted" }.count, 1, "\(logLines)")
+        }
+    }
+
+    func testAnotherRefusalIsNotAChallenge() async {
+        stubConfig(Fixtures.configJSON())
+        StubURLProtocol.stub("POST", Fixtures.consentPath, StubResponse(status: 403, json: #"{"error":"Origin not allowed"}"#))
+        let sdk = makeSDK()
+        await sdk.initialize(config())
+
+        await sdk.acceptAll()
+
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertEqual(captcha.tokenCount, 0)
+    }
+
+    func testSendsTheIdentityTokenWithEverySubmit() async throws {
+        stubConfig(Fixtures.configJSON())
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.identityToken = "v2.1700000000.abc"
+        await sdk.initialize(configuration)
+
+        await sdk.acceptAll()
+        await sdk.rejectAll()
+
+        XCTAssertEqual(posts.map { $0.json?["identityToken"] as? String }, ["v2.1700000000.abc", "v2.1700000000.abc"])
+    }
+
+    func testSendsNoIdentityTokenUnlessGiven() async throws {
+        stubConfig(Fixtures.configJSON())
+        let sdk = makeSDK()
+        await sdk.initialize(config())
+
+        await sdk.acceptAll()
+
+        let body = try XCTUnwrap(posts.first?.json)
+        XCTAssertNil(body["identityToken"])
+    }
+
     func testFailureSendsNothingAndKeepsLocalState() async throws {
         stubConfig(Fixtures.captchaConfigJSON)
         captcha.result = .failure(CaptchaError.timedOut)

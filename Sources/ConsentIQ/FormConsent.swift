@@ -16,6 +16,7 @@ public final class FormConsent: ObservableObject {
 
     public var subjectId: String
     public var subjectType: SubjectType
+    public var identityToken: String?
     public var onConsentSubmitted: ((FormConsentResult) -> Void)?
     public var onConsentChange: ((MarketingConsentState) -> Void)?
 
@@ -24,7 +25,7 @@ public final class FormConsent: ObservableObject {
     private let logger: ConsentIQLogger
     private weak var consentIQ: ConsentIQ?
     private let captchaProviderFactory: CaptchaProviderFactory
-    private lazy var captchaProvider: (any CaptchaTokenProviding)? = captchaProviderFactory(apiClient.apiURL)
+    private lazy var captchaProvider: (any CaptchaTokenProviding)? = captchaProviderFactory(apiClient.apiURL, apiClient.propertyKey)
     private var propertyConfig: PropertyConfig?
 
     public convenience init(
@@ -35,6 +36,7 @@ public final class FormConsent: ObservableObject {
         channels: [String] = FormConsent.defaultChannels,
         session: URLSession = .shared,
         debug: Bool = false,
+        identityToken: String? = nil,
         onConsentSubmitted: ((FormConsentResult) -> Void)? = nil,
         onConsentChange: ((MarketingConsentState) -> Void)? = nil
     ) {
@@ -49,8 +51,9 @@ public final class FormConsent: ObservableObject {
             onConsentSubmitted: onConsentSubmitted,
             onConsentChange: onConsentChange,
             consentIQ: .shared,
-            captchaProviderFactory: { makeDefaultCaptchaProvider(apiURL: $0) }
+            captchaProviderFactory: { makeDefaultCaptchaProvider(apiURL: $0, propertyKey: $1) }
         )
+        self.identityToken = identityToken
     }
 
     init(
@@ -84,6 +87,7 @@ public final class FormConsent: ObservableObject {
         subjectId: String? = nil,
         subjectType: SubjectType = .user,
         channels: [String] = FormConsent.defaultChannels,
+        identityToken: String? = nil,
         onConsentSubmitted: ((FormConsentResult) -> Void)? = nil,
         onConsentChange: ((MarketingConsentState) -> Void)? = nil
     ) {
@@ -101,6 +105,7 @@ public final class FormConsent: ObservableObject {
             consentIQ: consentIQ,
             captchaProviderFactory: consentIQ.captchaProviderFactory
         )
+        self.identityToken = identityToken
     }
 
     public func toggle(_ channel: String) {
@@ -129,17 +134,24 @@ public final class FormConsent: ObservableObject {
             return nil
         }
         do {
-            let response = try await apiClient.submitConsent(ConsentSubmission(
-                propertyKey: apiClient.propertyKey,
-                subjectId: subjectId,
-                subjectType: subjectType,
-                marketingConsents: consents,
-                consentMethod: .form,
-                captchaToken: captchaToken
-            ))
+            let response = try await submitAnsweringChallenge(firstToken: captchaToken, provider: { captchaProvider }) { token in
+                try await apiClient.submitConsent(ConsentSubmission(
+                    propertyKey: apiClient.propertyKey,
+                    subjectId: subjectId,
+                    subjectType: subjectType,
+                    marketingConsents: consents,
+                    consentMethod: .form,
+                    captchaToken: token,
+                    identityToken: identityToken
+                ))
+            }
             let result = FormConsentResult(consentId: response.consentId, proofHash: response.proofHash, consents: consents)
             onConsentSubmitted?(result)
             return result
+        } catch let error as CaptchaError {
+            logger.debug("Captcha token unavailable: \(error)")
+            logger.warning(ConsentIQLogger.captchaFailedWarning)
+            return nil
         } catch {
             logger.error("Failed to submit form consent: \(error.localizedDescription)")
             return nil

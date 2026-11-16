@@ -34,12 +34,14 @@ struct StubResponse {
 final class StubURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var routes: [String: StubResponse] = [:]
+    private static var sequences: [String: [StubResponse]] = [:]
     private static var fallback: StubResponse?
     private static var recorded: [RecordedRequest] = []
 
     static func reset() {
         lock.lock(); defer { lock.unlock() }
         routes = [:]
+        sequences = [:]
         fallback = nil
         recorded = []
     }
@@ -47,6 +49,12 @@ final class StubURLProtocol: URLProtocol {
     static func stub(_ method: String, _ path: String, _ response: StubResponse) {
         lock.lock(); defer { lock.unlock() }
         routes["\(method) \(path)"] = response
+    }
+
+    /// Answers each request in turn; the last response repeats.
+    static func stubSequence(_ method: String, _ path: String, _ responses: [StubResponse]) {
+        lock.lock(); defer { lock.unlock() }
+        sequences["\(method) \(path)"] = responses
     }
 
     static func stubFallback(_ response: StubResponse) {
@@ -84,7 +92,14 @@ final class StubURLProtocol: URLProtocol {
         let response: StubResponse?
         Self.lock.lock()
         Self.recorded.append(recordedRequest)
-        response = Self.routes["\(recordedRequest.method) \(recordedRequest.path)"] ?? Self.fallback
+        let route = "\(recordedRequest.method) \(recordedRequest.path)"
+        if var sequence = Self.sequences[route], let next = sequence.first {
+            if sequence.count > 1 { sequence.removeFirst() }
+            Self.sequences[route] = sequence
+            response = next
+        } else {
+            response = Self.routes[route] ?? Self.fallback
+        }
         Self.lock.unlock()
 
         guard let response else {

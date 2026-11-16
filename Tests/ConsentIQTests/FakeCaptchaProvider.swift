@@ -6,10 +6,12 @@ final class FakeCaptchaProvider: CaptchaTokenProviding {
     var result: Result<String, Error> = .success("tok")
     private(set) var tokenCount = 0
     private(set) var requestedAPIURLs: [URL] = []
+    private(set) var requestedPropertyKeys: [String] = []
 
     func factory(available: Bool = true) -> CaptchaProviderFactory {
-        { [self] apiURL in
+        { [self] apiURL, propertyKey in
             requestedAPIURLs.append(apiURL)
+            requestedPropertyKeys.append(propertyKey)
             guard available else { return nil }
             return self
         }

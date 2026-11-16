@@ -10,6 +10,8 @@ public struct ConsentIQConfig {
     public var language: String?
     public var autoShow: Bool
     public var debug: Bool
+    /// Your server's signature for this person, sent with every submit unread.
+    public var identityToken: String?
     public var onConsentChange: ((ConsentState, MarketingConsentState) -> Void)?
     public var onOpen: (() -> Void)?
     public var onAccept: ((ConsentOutcome) -> Void)?
@@ -26,6 +28,7 @@ public struct ConsentIQConfig {
         language: String? = nil,
         autoShow: Bool = true,
         debug: Bool = false,
+        identityToken: String? = nil,
         onConsentChange: ((ConsentState, MarketingConsentState) -> Void)? = nil,
         onOpen: (() -> Void)? = nil,
         onAccept: ((ConsentOutcome) -> Void)? = nil,
@@ -41,6 +44,7 @@ public struct ConsentIQConfig {
         self.language = language
         self.autoShow = autoShow
         self.debug = debug
+        self.identityToken = identityToken
         self.onConsentChange = onConsentChange
         self.onOpen = onOpen
         self.onAccept = onAccept

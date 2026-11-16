@@ -3,7 +3,7 @@ import XCTest
 @testable import ConsentIQ
 
 final class WebViewCaptchaProviderTests: XCTestCase {
-    private let pageURL = WebViewCaptchaProvider.pageURL(apiURL: Fixtures.apiURL)
+    private let pageURL = WebViewCaptchaProvider.pageURL(apiURL: Fixtures.apiURL, propertyKey: "pk_test")
 
     private func allows(_ url: String, mainFrame: Bool) -> Bool {
         WebViewCaptchaProvider.allowsNavigation(to: URL(string: url), isMainFrame: mainFrame, pageURL: pageURL)
@@ -13,19 +13,21 @@ final class WebViewCaptchaProviderTests: XCTestCase {
         WebViewCaptchaProvider.isPageOrigin(scheme: scheme, host: host, port: port, pageURL: pageURL)
     }
 
-    func testPageURLIsUnderTheAPIURL() throws {
-        XCTAssertEqual(pageURL.absoluteString, "https://consent.example.test/api/public/captcha/mobile")
-        let trailingSlash = try XCTUnwrap(URL(string: "https://consent.iqworks.ai/"))
+    func testPageURLIsUnderTheAPIURLAndNamesTheProperty() throws {
+        XCTAssertEqual(pageURL.absoluteString, "https://consent.example.test/api/public/captcha/mobile?key=pk_test")
+        let trailingSlash = try XCTUnwrap(URL(string: "https://consent.example.test/"))
         XCTAssertEqual(
-            WebViewCaptchaProvider.pageURL(apiURL: trailingSlash).absoluteString,
-            "https://consent.iqworks.ai/api/public/captcha/mobile"
+            WebViewCaptchaProvider.pageURL(apiURL: trailingSlash, propertyKey: "a b&c").absoluteString,
+            "https://consent.example.test/api/public/captcha/mobile?key=a%20b%26c"
         )
     }
 
     func testMainFrameMayOnlyLoadThePage() {
-        XCTAssertTrue(allows("https://consent.example.test/api/public/captcha/mobile", mainFrame: true))
-        XCTAssertTrue(allows("HTTPS://Consent.Example.Test:443/api/public/captcha/mobile", mainFrame: true))
+        XCTAssertTrue(allows("https://consent.example.test/api/public/captcha/mobile?key=pk_test", mainFrame: true))
+        XCTAssertTrue(allows("HTTPS://Consent.Example.Test:443/api/public/captcha/mobile?key=pk_test", mainFrame: true))
 
+        XCTAssertFalse(allows("https://consent.example.test/api/public/captcha/mobile", mainFrame: true))
+        XCTAssertFalse(allows("https://consent.example.test/api/public/captcha/mobile?key=other", mainFrame: true))
         XCTAssertFalse(allows("https://consent.example.test/api/public/captcha/mobile?next=x", mainFrame: true))
         XCTAssertFalse(allows("https://consent.example.test/api/public/captcha/mobile/x", mainFrame: true))
         XCTAssertFalse(allows("https://consent.example.test/", mainFrame: true))

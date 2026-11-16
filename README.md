@@ -141,6 +141,7 @@ of the same app use the iOS key.
 | `language` | `nil` | Override the property's default language, for example `"ar-EG"` |
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |
 | `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq`. Turn it on in debug builds only |
+| `identityToken` | `nil` | Your server's signature for this person, sent with every submission. ConsentIQ verifies it and marks the record verified by your organization. Sign on your server, never in the app |
 | `onError` | `nil` | Called when the SDK recovers from a failure; today, a TCF screen that could not load or answer |
 
 `ConsentIQ` (`@MainActor`, `ObservableObject`, use `ConsentIQ.shared`)
@@ -164,7 +165,8 @@ Every write updates local state first, posts to ConsentIQ, persists the cache, t
 `onConsentChange`. A failed post is logged and local state is kept.
 
 `FormConsent` mirrors the marketing consent form helper: `toggle(_:)`, `set(_:_:)`, `submit()`
-(posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`.
+(posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`. Set
+its `identityToken` to send your server's signature with the form.
 Build one with `FormConsent(consentIQ: .shared)` after initialization, or with an explicit
 `propertyKey` and `subjectId`.
 
@@ -220,16 +222,19 @@ different suite, because that is where vendor SDKs read them.
 ## Limitations
 
 **Captcha.** If "Require CAPTCHA" is turned on for the property, the SDK runs Cloudflare
-Turnstile invisibly before each submission, in a hidden web view that loads from
-consent.iqworks.ai and challenges.cloudflare.com. Nothing is loaded until the first submission
-that needs it. If the check fails, times out, or needs the visitor to interact, the submission is
-not sent, local state is kept (`FormConsent.submit()` returns `nil`), and the SDK logs:
+Turnstile before each submission, in a web view that loads from consent.iqworks.ai and
+challenges.cloudflare.com. ConsentIQ may also ask for a captcha on any property when a submission
+looks automated; the SDK then solves one and sends the submission once more. The check runs
+invisibly. If it has not finished within a few seconds, it is shown over your app with a Cancel
+button, so a visitor Cloudflare wants to click can do so. Nothing is loaded until the first
+submission that needs it. If the check fails, times out, or is cancelled, the submission is not
+sent, local state is kept (`FormConsent.submit()` returns `nil`), and the SDK logs:
 
 ```
 [ConsentIQ] Captcha check failed; consent not submitted
 ```
 
-With the setting on, list Cloudflare Turnstile in your app's privacy disclosures.
+List Cloudflare Turnstile in your app's privacy disclosures.
 
 **Geo.** The applicable regulation is resolved on the server from the request's network location.
 The SDK does not send device location.

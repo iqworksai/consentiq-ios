@@ -198,6 +198,35 @@ final class FormConsentTests: XCTestCase {
         XCTAssertEqual(posts.first?.json?["captchaToken"] as? String, "tok")
     }
 
+    func testFormAnswersAChallengeOnceAndSendsItsIdentityToken() async throws {
+        StubURLProtocol.stubSequence("POST", Fixtures.consentPath, [
+            StubResponse(status: 428, json: #"{"error":"captcha_required"}"#),
+            StubResponse(json: Fixtures.submitResultJSON),
+        ])
+        let form = makeForm()
+        form.identityToken = "v2.1700000000.abc"
+
+        let result = await form.submit()
+
+        XCTAssertEqual(result?.consentId, "c-2")
+        XCTAssertEqual(posts.count, 2)
+        XCTAssertEqual(posts[1].json?["captchaToken"] as? String, "tok")
+        XCTAssertEqual(posts.map { $0.json?["identityToken"] as? String }, ["v2.1700000000.abc", "v2.1700000000.abc"])
+        XCTAssertEqual(captcha.requestedPropertyKeys, [Fixtures.propertyKey])
+    }
+
+    func testFormCancelledChallengeReturnsNil() async {
+        StubURLProtocol.stub("POST", Fixtures.consentPath, StubResponse(status: 428, json: #"{"error":"captcha_required"}"#))
+        captcha.result = .failure(CaptchaError.cancelled)
+        let form = makeForm()
+
+        let result = await form.submit()
+
+        XCTAssertNil(result)
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertEqual(logLines.filter { $0 == "[ConsentIQ] Captcha check failed; consent not submitted" }.count, 1, "\(logLines)")
+    }
+
     func testResetClearsEveryChannel() {
         let form = makeForm(channels: ["email", "push"])
         form.set("email", true)

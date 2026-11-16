@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- When ConsentIQ answers a submission with `428 captcha_required`, which it can do on any property
+  when a submission looks automated, the SDK solves one Cloudflare Turnstile challenge and sends
+  the submission once more. `FormConsent.submit()` does the same.
+- The captcha page is loaded with the property key, so a token is accepted only for that property.
+- A challenge that has not finished within 3 seconds, or that asks for interaction, is shown over
+  the app with a Cancel button. Once shown it waits up to 2 minutes. Cancelling, a failure or a
+  timeout sends nothing more, keeps local state and logs the usual captcha warning.
+- `ConsentIQConfig.identityToken`, `FormConsent.identityToken` and `ConsentSubmission.identityToken`
+  send your server's signature for the person with each submission, unread by the SDK.
 - IAB TCF in-app support. When a property has TCF turned on and ConsentIQ's CMP ID is issued, the
   SDK writes `IABTCF_CmpSdkID` and `IABTCF_CmpSdkVersion` at start-up and shows ConsentIQ's hosted
   TCF screens full-screen in a web view instead of the native sheet. Each decision writes the

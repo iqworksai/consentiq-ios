@@ -53,7 +53,7 @@ public final class ConsentIQ: ObservableObject {
         self.init(
             storage: storage,
             urlSessionConfiguration: urlSessionConfiguration,
-            captchaProviderFactory: { makeDefaultCaptchaProvider(apiURL: $0) }
+            captchaProviderFactory: { makeDefaultCaptchaProvider(apiURL: $0, propertyKey: $1) }
         )
     }
 
@@ -98,7 +98,7 @@ public final class ConsentIQ: ObservableObject {
             regulation = propertyConfig.resolvedRegulation
             language = config.language ?? propertyConfig.property.defaultLanguage ?? "en"
 
-            resolveCaptchaProvider(for: propertyConfig, apiURL: config.apiURL)
+            resolveCaptchaProvider(for: propertyConfig, config: config)
             prepareTcf(propertyConfig)
 
             var foundExistingConsent = false
@@ -276,12 +276,12 @@ public final class ConsentIQ: ObservableObject {
         return config.autoGenerateSubjectId ? storage.getOrCreateSubjectId() : nil
     }
 
-    private func resolveCaptchaProvider(for propertyConfig: PropertyConfig, apiURL: URL) {
+    private func resolveCaptchaProvider(for propertyConfig: PropertyConfig, config: ConsentIQConfig) {
         guard propertyConfig.requireCaptcha else {
             captchaProvider = nil
             return
         }
-        captchaProvider = captchaProviderFactory(apiURL)
+        captchaProvider = captchaProviderFactory(config.apiURL, config.propertyKey)
         if captchaProvider == nil, !hasWarnedAboutCaptcha {
             hasWarnedAboutCaptcha = true
             logger.warning(ConsentIQLogger.captchaWarning)
@@ -291,6 +291,14 @@ public final class ConsentIQ: ObservableObject {
     private func captchaToken() async throws -> String? {
         guard let config, config.requiresCaptchaToken, let captchaProvider else { return nil }
         return try await captchaProvider.token()
+    }
+
+    // A property without Require CAPTCHA has no provider until the server first asks for one.
+    private func challengeProvider() -> (any CaptchaTokenProviding)? {
+        if captchaProvider == nil, let configuration {
+            captchaProvider = captchaProviderFactory(configuration.apiURL, configuration.propertyKey)
+        }
+        return captchaProvider
     }
 
     private func submit(cookieConsents: ConsentState, marketingConsents: MarketingConsentState) async {
@@ -306,17 +314,24 @@ public final class ConsentIQ: ObservableObject {
             logger.warning(ConsentIQLogger.captchaFailedWarning)
             return
         }
+        let identityToken = configuration?.identityToken
         do {
-            _ = try await apiClient.submitConsent(ConsentSubmission(
-                propertyKey: apiClient.propertyKey,
-                subjectId: subjectId,
-                cookieConsents: cookieConsents,
-                marketingConsents: marketingConsents,
-                consentMethod: .sdk,
-                captchaToken: captchaToken
-            ))
+            _ = try await submitAnsweringChallenge(firstToken: captchaToken, provider: challengeProvider) { token in
+                try await apiClient.submitConsent(ConsentSubmission(
+                    propertyKey: apiClient.propertyKey,
+                    subjectId: subjectId,
+                    cookieConsents: cookieConsents,
+                    marketingConsents: marketingConsents,
+                    consentMethod: .sdk,
+                    captchaToken: token,
+                    identityToken: identityToken
+                ))
+            }
             storage.saveConsent(cookieConsents)
             configuration?.onConsentChange?(cookieConsents, marketingConsents)
+        } catch let error as CaptchaError {
+            logger.debug("Captcha token unavailable: \(error)")
+            logger.warning(ConsentIQLogger.captchaFailedWarning)
         } catch {
             logger.error("Failed to submit consent: \(error.localizedDescription)")
         }
