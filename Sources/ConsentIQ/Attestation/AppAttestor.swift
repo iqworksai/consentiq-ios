@@ -70,7 +70,7 @@ actor AppAttestor {
         defaults: UserDefaults,
         apiURL: String,
         propertyKey: String,
-        now: @escaping @Sendable () -> Date = Date.init,
+        now: @escaping @Sendable () -> Date = { Date() },
         challenge: @escaping @Sendable () async throws -> Data,
         register: @escaping @Sendable (_ keyId: String, _ attestation: Data, _ challenge: Data) async throws -> Int
     ) {
