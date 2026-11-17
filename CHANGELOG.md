@@ -6,7 +6,10 @@
   `subjectSource: "site"` on every write, and to the in-app TCF page, so ConsentIQ stores it apart
   from the ids the SDK generates. A supplied id containing `:` is refused: `initialize` reports an
   `InvalidSubjectIdError` through `onError` and keeps consent local, and `FormConsent.submit()`
-  returns `nil`.
+  returns `nil`. Its stored consent is restored with `POST /api/public/consent/{key}/{subjectId}` and
+  the `identityToken`, which reads only records ConsentIQ verified; without a token the SDK does not
+  look it up and relies on the copy on the device. Generated ids are still restored with the open
+  lookup.
 - When ConsentIQ answers a submission with `428 captcha_required`, which it can do on any property
   when a submission looks automated, the SDK solves one Cloudflare Turnstile challenge and sends
   the submission once more. `FormConsent.submit()` does the same.

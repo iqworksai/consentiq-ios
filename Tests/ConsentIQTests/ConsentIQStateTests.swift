@@ -217,14 +217,14 @@ final class ConsentIQStateTests: XCTestCase {
 
     func testProvidedSubjectIdIsUsedAndNotPersisted() async {
         stubConfig()
-        stubConsentLookup(Fixtures.noConsentJSON, subjectId: "user-42")
         let sdk = makeSDK()
 
         await sdk.initialize(config(subjectId: "user-42"))
 
         XCTAssertEqual(sdk.subjectId, "user-42")
         XCTAssertNil(storage.loadSubjectId())
-        XCTAssertEqual(StubURLProtocol.requests.last?.path, Fixtures.consentLookupPath("user-42"))
+        // Without an identity token an app-chosen id is not looked up at all.
+        XCTAssertEqual(StubURLProtocol.requests.last?.path, Fixtures.configPath)
     }
 
     func testNoSubjectIdWhenAutoGenerationIsOff() async {

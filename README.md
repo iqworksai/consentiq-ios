@@ -136,7 +136,7 @@ of the same app use the iOS key.
 | --- | --- | --- |
 | `propertyKey` | required | The property's public key from the dashboard |
 | `apiURL` | `https://consent.iqworks.ai` | ConsentIQ base URL |
-| `subjectId` | `nil` | Supply your own id instead of a generated one. It must be random and unguessable, never an account number, email address or phone number: the consent lookup needs only the property key, which ships in your app. It may not contain `:`; such an id is refused with `InvalidSubjectIdError` through `onError`. The SDK marks your id as yours (`subjectSource: "site"`), so ConsentIQ keeps it apart from generated ids |
+| `subjectId` | `nil` | Supply your own id instead of a generated one. It must be random and unguessable, never an account number, email address or phone number: the consent lookup needs only the property key, which ships in your app. It may not contain `:`; such an id is refused with `InvalidSubjectIdError` through `onError`. The SDK marks your id as yours (`subjectSource: "site"`), so ConsentIQ keeps it apart from generated ids. Its stored consent is restored only with `identityToken`; without one the SDK relies on the copy on the device |
 | `autoGenerateSubjectId` | `true` | Generate and persist a UUID when `subjectId` is nil |
 | `language` | `nil` | Override the property's default language, for example `"ar-EG"` |
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |

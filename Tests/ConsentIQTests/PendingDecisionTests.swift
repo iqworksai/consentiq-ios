@@ -194,11 +194,12 @@ final class PendingDecisionTests: XCTestCase {
     func testANewerRecordOnTheServerWinsOverTheWaitingDecision() async {
         let decidedAt = Date(timeIntervalSince1970: 1_700_000_000)
         refuse(429)
-        await launch(at: decidedAt, subjectId: "user-a").acceptAll()
+        await launch(at: decidedAt).acceptAll()
 
         accept()
-        StubURLProtocol.stub("GET", Fixtures.consentLookupPath("user-a"), StubResponse(json: Fixtures.savedConsentJSON))
-        _ = await launch(at: decidedAt.addingTimeInterval(60), subjectId: "user-a")
+        let generated = storage.loadSubjectId() ?? ""
+        StubURLProtocol.stub("GET", Fixtures.consentLookupPath(generated), StubResponse(json: Fixtures.savedConsentJSON))
+        _ = await launch(at: decidedAt.addingTimeInterval(60))
 
         XCTAssertEqual(posts.count, 1, "the record dated 2026-01-01 is newer than the decision")
         XCTAssertNil(storage.loadPendingDecision())
@@ -207,11 +208,12 @@ final class PendingDecisionTests: XCTestCase {
     func testAnOlderRecordOnTheServerDoesNotStopTheResend() async {
         let decidedAt = Date(timeIntervalSince1970: 1_800_000_000)
         refuse(429)
-        await launch(at: decidedAt, subjectId: "user-a").acceptAll()
+        await launch(at: decidedAt).acceptAll()
 
         accept()
-        StubURLProtocol.stub("GET", Fixtures.consentLookupPath("user-a"), StubResponse(json: Fixtures.savedConsentJSON))
-        _ = await launch(at: decidedAt.addingTimeInterval(60), subjectId: "user-a")
+        let generated = storage.loadSubjectId() ?? ""
+        StubURLProtocol.stub("GET", Fixtures.consentLookupPath(generated), StubResponse(json: Fixtures.savedConsentJSON))
+        _ = await launch(at: decidedAt.addingTimeInterval(60))
 
         XCTAssertEqual(posts.count, 2)
         XCTAssertNil(storage.loadPendingDecision())

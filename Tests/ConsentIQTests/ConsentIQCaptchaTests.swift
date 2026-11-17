@@ -182,6 +182,34 @@ final class ConsentIQCaptchaTests: XCTestCase {
         XCTAssertNil(posts[1].json?["subjectSource"])
     }
 
+    func testRestoresAnAppChosenSubjectOnlyWithItsIdentityToken() async throws {
+        stubConfig(Fixtures.configJSON())
+        StubURLProtocol.stub("POST", Fixtures.consentLookupPath("user-42"), StubResponse(json: Fixtures.savedConsentJSON))
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.subjectId = "user-42"
+        configuration.identityToken = "v2.1.sig"
+        await sdk.initialize(configuration)
+
+        let restore = try XCTUnwrap(StubURLProtocol.requests(matching: "POST", Fixtures.consentLookupPath("user-42")).first)
+        XCTAssertEqual(restore.json?["identityToken"] as? String, "v2.1.sig")
+        XCTAssertTrue(StubURLProtocol.requests(matching: "GET", Fixtures.consentLookupPath("user-42")).isEmpty)
+        XCTAssertEqual(sdk.consent["analytics"], true)
+    }
+
+    func testNeverLooksUpAnAppChosenSubjectWithoutATokenAndKeepsTheLocalCopy() async throws {
+        stubConfig(Fixtures.configJSON())
+        storage.saveConsent(["necessary": true, "analytics": true])
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.subjectId = "user-42"
+        await sdk.initialize(configuration)
+
+        XCTAssertTrue(StubURLProtocol.requests(matching: "GET", Fixtures.consentLookupPath("user-42")).isEmpty)
+        XCTAssertTrue(StubURLProtocol.requests(matching: "POST", Fixtures.consentLookupPath("user-42")).isEmpty)
+        XCTAssertEqual(sdk.consent["analytics"], true)
+    }
+
     func testRefusesAnAppChosenSubjectIdWithAColon() async throws {
         stubConfig(Fixtures.configJSON())
         let sdk = makeSDK()

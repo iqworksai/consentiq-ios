@@ -253,12 +253,20 @@ public final class ConsentIQ: ObservableObject {
     }
 
     private func restoreConsent(client: ConsentIQAPIClient, subjectId: String) async -> Bool {
+        // An id the app chose is read only with its identity token; without one the local copy stands,
+        // since the open lookup reads only ids this SDK generated.
+        let siteSubject = subjectSource != nil
+        let identityToken = configuration?.identityToken
         let lookup: ConsentLookup?
-        do {
-            lookup = try await client.getConsent(subjectId: subjectId)
-        } catch {
-            logger.debug("Consent lookup failed: \(error.localizedDescription)")
+        if siteSubject && identityToken == nil {
             lookup = nil
+        } else {
+            do {
+                lookup = try await client.getConsent(subjectId: subjectId, identityToken: siteSubject ? identityToken : nil)
+            } catch {
+                logger.debug("Consent lookup failed: \(error.localizedDescription)")
+                lookup = nil
+            }
         }
 
         serverConsentedAt = lookup?.consent.flatMap { Self.parseTimestamp($0.consentedAt) }

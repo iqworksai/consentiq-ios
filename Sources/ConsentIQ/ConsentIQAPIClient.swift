@@ -40,9 +40,18 @@ public struct ConsentIQAPIClient: Sendable {
         return config
     }
 
-    public func getConsent(subjectId: String) async throws -> ConsentLookup {
+    /// The stored consent for `subjectId`. An id the app chose is read with its `identityToken`, from
+    /// the records ConsentIQ verified; an id this SDK generated is read without one.
+    public func getConsent(subjectId: String, identityToken: String? = nil) async throws -> ConsentLookup {
         logger.debug("Fetching consent")
-        let lookup: ConsentLookup = try await request(path: "/api/public/consent/\(propertyKey)/\(subjectId)")
+        let path = "/api/public/consent/\(propertyKey)/\(subjectId)"
+        let lookup: ConsentLookup
+        if let identityToken {
+            let body = try JSONEncoder().encode(["identityToken": identityToken])
+            lookup = try await request(path: path, method: "POST", body: body)
+        } else {
+            lookup = try await request(path: path)
+        }
         logger.debug("Consent loaded: found=\(lookup.consent != nil) expired=\(lookup.expired)")
         return lookup
     }

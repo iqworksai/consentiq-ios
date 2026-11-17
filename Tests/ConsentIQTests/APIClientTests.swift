@@ -50,6 +50,16 @@ final class APIClientTests: XCTestCase {
         XCTAssertFalse(config.banner?.showLogo ?? true)
     }
 
+    func testGetConsentWithAnIdentityTokenPostsIt() async throws {
+        StubURLProtocol.stub("POST", Fixtures.consentLookupPath("user-42"), StubResponse(json: Fixtures.savedConsentJSON))
+
+        let lookup = try await client.getConsent(subjectId: "user-42", identityToken: "v2.1.sig")
+
+        let request = try XCTUnwrap(StubURLProtocol.requests(matching: "POST", Fixtures.consentLookupPath("user-42")).first)
+        XCTAssertEqual(request.json?["identityToken"] as? String, "v2.1.sig")
+        XCTAssertEqual(lookup.consent?.id, "c-1")
+    }
+
     func testGetConsentHitsSubjectURL() async throws {
         StubURLProtocol.stub("GET", Fixtures.consentLookupPath("subj-1"), StubResponse(json: Fixtures.savedConsentJSON))
 
