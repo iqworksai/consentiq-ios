@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A subject id you supply (`ConsentIQConfig.subjectId`, `FormConsent`) is sent with
+  `subjectSource: "site"` on every write, and to the in-app TCF page, so ConsentIQ stores it apart
+  from the ids the SDK generates. A supplied id containing `:` is refused: `initialize` reports an
+  `InvalidSubjectIdError` through `onError` and keeps consent local, and `FormConsent.submit()`
+  returns `nil`.
 - When ConsentIQ answers a submission with `428 captcha_required`, which it can do on any property
   when a submission looks automated, the SDK solves one Cloudflare Turnstile challenge and sends
   the submission once more. `FormConsent.submit()` does the same.

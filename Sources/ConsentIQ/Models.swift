@@ -397,6 +397,8 @@ public struct ConsentSubmission: Encodable, Sendable {
     public var consentVersion: String?
     public var captchaToken: String?
     public var identityToken: String?
+    /// `.site` for a subject id the app chose, so ConsentIQ keeps it apart from SDK-generated ids.
+    public var subjectSource: SubjectSource?
 
     public init(
         propertyKey: String,
@@ -410,7 +412,8 @@ public struct ConsentSubmission: Encodable, Sendable {
         consentMethod: ConsentMethod = .sdk,
         consentVersion: String? = nil,
         captchaToken: String? = nil,
-        identityToken: String? = nil
+        identityToken: String? = nil,
+        subjectSource: SubjectSource? = nil
     ) {
         self.propertyKey = propertyKey
         self.subjectId = subjectId
@@ -424,6 +427,23 @@ public struct ConsentSubmission: Encodable, Sendable {
         self.consentVersion = consentVersion
         self.captchaToken = captchaToken
         self.identityToken = identityToken
+        self.subjectSource = subjectSource
+    }
+}
+
+/// Where a subject id came from. Only an app-chosen one is marked; a generated id sends nothing.
+public enum SubjectSource: String, Encodable, Sendable {
+    case site
+}
+
+/// A subject id ConsentIQ refuses. It may not contain ':', which would let it pose as an id of
+/// another kind.
+public struct InvalidSubjectIdError: Error, CustomStringConvertible, Sendable {
+    public let subjectId: String
+    public var description: String { "ConsentIQ subjectId may not contain ':'" }
+
+    static func check(_ subjectId: String) -> InvalidSubjectIdError? {
+        subjectId.contains(":") ? InvalidSubjectIdError(subjectId: subjectId) : nil
     }
 }
 

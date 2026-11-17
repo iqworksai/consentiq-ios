@@ -82,7 +82,8 @@ extension ConsentIQ {
             stored: storage.loadTcfStored(),
             consent: consent,
             reopen: reopen,
-            token: UUID().uuidString
+            token: UUID().uuidString,
+            subjectSource: subjectSource
         )
         let session = TcfSession(
             page: page,

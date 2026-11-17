@@ -86,6 +86,7 @@ final class FormConsentTests: XCTestCase {
         let body = try XCTUnwrap(StubURLProtocol.requests(matching: "POST", Fixtures.consentPath).first?.json)
         XCTAssertEqual(body["propertyKey"] as? String, Fixtures.propertyKey)
         XCTAssertEqual(body["subjectId"] as? String, "user-1")
+        XCTAssertEqual(body["subjectSource"] as? String, "site")
         XCTAssertEqual(body["subjectType"] as? String, "user")
         XCTAssertEqual(body["consentMethod"] as? String, "form")
         XCTAssertEqual(body["marketingConsents"] as? [String: Bool], ["email": true, "sms": false, "whatsapp": false, "push": false])
@@ -250,5 +251,19 @@ final class FormConsentTests: XCTestCase {
 
         XCTAssertEqual(form.subjectId, sdk.subjectId)
         XCTAssertEqual(form.subjectType, .user)
+        // The SDK generated this id, so the form does not claim it as the app's.
+        XCTAssertNil(form.subjectSource)
+        XCTAssertEqual(FormConsent(consentIQ: sdk, subjectId: "user-9").subjectSource, .site)
+    }
+
+    func testFormRefusesASubjectIdWithAColon() async {
+        StubURLProtocol.stub("POST", Fixtures.consentPath, StubResponse(json: Fixtures.submitResultJSON))
+        let form = makeForm(subjectId: "site:user-1")
+
+        let result = await form.submit()
+
+        XCTAssertNil(result)
+        XCTAssertTrue(StubURLProtocol.requests(matching: "POST", Fixtures.consentPath).isEmpty)
+        XCTAssertTrue(logLines.contains { $0.contains("may not contain ':'") })
     }
 }

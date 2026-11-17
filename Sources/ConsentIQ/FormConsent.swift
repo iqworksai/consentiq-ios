@@ -17,6 +17,8 @@ public final class FormConsent: ObservableObject {
     public var subjectId: String
     public var subjectType: SubjectType
     public var identityToken: String?
+    /// `.site` unless the form borrowed the subject id ConsentIQ generated.
+    var subjectSource: SubjectSource? = .site
     public var onConsentSubmitted: ((FormConsentResult) -> Void)?
     public var onConsentChange: ((MarketingConsentState) -> Void)?
 
@@ -110,6 +112,7 @@ public final class FormConsent: ObservableObject {
             appAttestorFactory: consentIQ.appAttestorFactory
         )
         self.identityToken = identityToken
+        if subjectId == nil { self.subjectSource = consentIQ.subjectSource }
     }
 
     public func toggle(_ channel: String) {
@@ -125,6 +128,10 @@ public final class FormConsent: ObservableObject {
     public func submit() async -> FormConsentResult? {
         guard !subjectId.isEmpty else {
             logger.debug("Skipping form consent submit: no subject id")
+            return nil
+        }
+        if let invalid = InvalidSubjectIdError.check(subjectId) {
+            logger.error(invalid.description)
             return nil
         }
         isSubmitting = true
@@ -146,7 +153,8 @@ public final class FormConsent: ObservableObject {
                     marketingConsents: consents,
                     consentMethod: .form,
                     captchaToken: token,
-                    identityToken: identityToken
+                    identityToken: identityToken,
+                    subjectSource: subjectSource
                 ))
             }
             let result = FormConsentResult(consentId: response.consentId, proofHash: response.proofHash, consents: consents)

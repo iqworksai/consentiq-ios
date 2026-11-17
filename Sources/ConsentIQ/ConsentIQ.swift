@@ -285,9 +285,20 @@ public final class ConsentIQ: ObservableObject {
 
     private func resolveSubjectId(_ config: ConsentIQConfig) -> String? {
         if let provided = config.subjectId, !provided.isEmpty {
+            if let invalid = InvalidSubjectIdError.check(provided) {
+                logger.error(invalid.description)
+                config.onError?(invalid)
+                return nil
+            }
             return provided
         }
         return config.autoGenerateSubjectId ? storage.getOrCreateSubjectId() : nil
+    }
+
+    /// `.site` when the subject id in use is the app's own rather than one this SDK generated.
+    var subjectSource: SubjectSource? {
+        guard let provided = configuration?.subjectId, !provided.isEmpty, provided == subjectId else { return nil }
+        return .site
     }
 
     private func resolveCaptchaProvider(for propertyConfig: PropertyConfig, config: ConsentIQConfig) {
@@ -332,6 +343,7 @@ public final class ConsentIQ: ObservableObject {
             return
         }
         let identityToken = configuration?.identityToken
+        let subjectSource = subjectSource
         do {
             _ = try await submitAnsweringChallenge(firstToken: captchaToken, provider: challengeProvider) { token in
                 try await apiClient.submitConsent(ConsentSubmission(
@@ -341,7 +353,8 @@ public final class ConsentIQ: ObservableObject {
                     marketingConsents: marketingConsents,
                     consentMethod: .sdk,
                     captchaToken: token,
-                    identityToken: identityToken
+                    identityToken: identityToken,
+                    subjectSource: subjectSource
                 ))
             }
             storage.clearPendingDecision()
@@ -417,7 +430,8 @@ public final class ConsentIQ: ObservableObject {
                 cookieConsents: pending.cookieConsents,
                 marketingConsents: pending.marketingConsents,
                 consentMethod: .sdk,
-                identityToken: configuration?.identityToken
+                identityToken: configuration?.identityToken,
+                subjectSource: subjectSource
             ))
         } catch let error as ConsentIQAPIError {
             logger.debug("Pending consent not recorded: \(error.localizedDescription)")

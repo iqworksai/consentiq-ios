@@ -83,7 +83,12 @@ final class TcfMessageTests: XCTestCase {
         XCTAssertEqual(arguments["consent"] as? [String: Bool], ["necessary": true])
         XCTAssertEqual(arguments["reopen"] as? Bool, false)
         XCTAssertEqual(arguments["token"] as? String, "t-1")
+        XCTAssertNil(arguments["subjectSource"])
         XCTAssertTrue(JSONSerialization.isValidJSONObject(arguments))
+
+        let site = TcfStartOptions(subjectId: "user-42", stored: nil, consent: [:], reopen: false, token: "t-2", subjectSource: .site)
+        XCTAssertEqual(site.arguments["subjectSource"] as? String, "site")
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(site.arguments))
     }
 
     func testPageURLCarriesThePropertyKey() throws {

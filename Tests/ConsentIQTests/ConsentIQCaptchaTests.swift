@@ -165,6 +165,40 @@ final class ConsentIQCaptchaTests: XCTestCase {
         XCTAssertEqual(posts.map { $0.json?["identityToken"] as? String }, ["v2.1700000000.abc", "v2.1700000000.abc"])
     }
 
+    func testMarksAnAppChosenSubjectAsSiteAndAGeneratedOneNot() async throws {
+        stubConfig(Fixtures.configJSON())
+        let site = makeSDK()
+        var configuration = config()
+        configuration.subjectId = "user-42"
+        await site.initialize(configuration)
+        await site.acceptAll()
+
+        let generated = makeSDK()
+        await generated.initialize(config())
+        await generated.acceptAll()
+
+        XCTAssertEqual(posts.count, 2)
+        XCTAssertEqual(posts[0].json?["subjectSource"] as? String, "site")
+        XCTAssertNil(posts[1].json?["subjectSource"])
+    }
+
+    func testRefusesAnAppChosenSubjectIdWithAColon() async throws {
+        stubConfig(Fixtures.configJSON())
+        let sdk = makeSDK()
+        var errors: [Error] = []
+        var configuration = config()
+        configuration.subjectId = "site:user-42"
+        configuration.onError = { errors.append($0) }
+        await sdk.initialize(configuration)
+        await sdk.acceptAll()
+
+        XCTAssertNil(sdk.subjectId)
+        XCTAssertTrue(posts.isEmpty)
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertTrue(errors.first is InvalidSubjectIdError)
+        XCTAssertTrue(logLines.contains { $0.contains("may not contain ':'") })
+    }
+
     func testSendsNoIdentityTokenUnlessGiven() async throws {
         stubConfig(Fixtures.configJSON())
         let sdk = makeSDK()

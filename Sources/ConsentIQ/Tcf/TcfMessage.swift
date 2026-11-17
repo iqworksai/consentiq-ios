@@ -92,14 +92,17 @@ struct TcfStartOptions {
     let consent: ConsentState
     let reopen: Bool
     let token: String
+    var subjectSource: SubjectSource?
 
     var arguments: [String: Any] {
-        [
+        var arguments: [String: Any] = [
             "subjectId": subjectId,
             "stored": stored ?? NSNull(),
             "consent": consent,
             "reopen": reopen,
             "token": token,
         ]
+        if let subjectSource { arguments["subjectSource"] = subjectSource.rawValue }
+        return arguments
     }
 }
