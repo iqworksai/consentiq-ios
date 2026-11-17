@@ -14,6 +14,7 @@
   sends the signed identifier when the subject is that identifier written differently.
 - A restore refused with `403` drops the local copy, calls `onError` and shows the sheet.
 - The in-app TCF page receives the `identityToken` for a subject id you supply.
+- A TCF decision the in-app page could not record with ConsentIQ (`recorded: false`) applies for the session, but is not kept: the local copy and the stored TC string are dropped, the next launch asks again with nothing granted, and `onError` receives a `ConsentIQAPIError` with the record's HTTP status (0 when the server never answered).
 
 - A subject id you supply (`ConsentIQConfig.subjectId`, `FormConsent`) is sent with
   `subjectSource: "site"` on every write, and to the in-app TCF page, so ConsentIQ stores it apart

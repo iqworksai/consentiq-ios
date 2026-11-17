@@ -311,4 +311,34 @@ final class ConsentIQTcfTests: TcfSDKTestCase {
         XCTAssertNil(options.arguments["identityToken"])
         sdk.endTcfSession()
     }
+
+    func testAnUnrecordedTcfDecisionAppliesForTheSessionThenAsksAgainAndTellsTheApp() async throws {
+        stubConfig(tcf: Fixtures.tcfJSON())
+        page.onStart = [FakeTcfPage.show]
+        page.onPresent = [Fixtures.tcfDecisionJSON.replacingOccurrences(
+            of: #""type": "decision","#, with: #""type": "decision", "recorded": false, "recordStatus": 503,"#
+        )]
+        let sdk = makeSDK()
+
+        await initialize(sdk)
+
+        XCTAssertEqual(standard.object(forKey: "IABTCF_TCString") as? String, "CQ-test", "the keys stand for this session")
+        XCTAssertTrue(sdk.hasConsent("analytics"))
+        XCTAssertNil(storage.loadTcfStored(), "nothing kept, so the next launch asks again")
+        XCTAssertNil(storage.loadConsent())
+        XCTAssertTrue(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+        XCTAssertEqual((errors.first as? ConsentIQAPIError)?.statusCode, 503)
+        XCTAssertFalse(events.contains("change:true"))
+    }
+
+    func testARecordedTcfDecisionClearsTheMarker() async {
+        storage.markUnrecorded(propertyKey: Fixtures.propertyKey)
+        stubConfig(tcf: Fixtures.tcfJSON())
+        page.onStart = [FakeTcfPage.show]
+        page.onPresent = [Fixtures.tcfDecisionJSON.replacingOccurrences(
+            of: #""type": "decision","#, with: #""type": "decision", "recorded": true,"#
+        )]
+        await initialize(makeSDK())
+        XCTAssertFalse(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+    }
 }

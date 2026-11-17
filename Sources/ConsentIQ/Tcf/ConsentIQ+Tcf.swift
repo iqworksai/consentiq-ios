@@ -110,9 +110,7 @@ extension ConsentIQ {
             tcfKeys.writeGdprApplies(1)
         case .decision(let decision):
             tcfFellBack = false
-            applyTcfDecision(decision)
-            reportTcfDecision(scope: decision.scope ?? inferredTcfScope(), configuration: configuration)
-            configuration.onConsentChange?(consent, marketingConsent)
+            settleTcfDecision(decision, configuration: configuration)
         case .notApplicable:
             tcfKeys.writeGdprApplies(0)
             isTcfActive = false
@@ -151,7 +149,29 @@ extension ConsentIQ {
         }
     }
 
-    // The page has already recorded this consent with ConsentIQ, so it is applied locally and never re-submitted.
+    private func settleTcfDecision(_ decision: TcfDecision, configuration: ConsentIQConfig) {
+        applyTcfDecision(decision)
+        reportTcfDecision(scope: decision.scope ?? inferredTcfScope(), configuration: configuration)
+        if decision.recorded {
+            storage.clearUnrecorded()
+            configuration.onConsentChange?(consent, marketingConsent)
+        } else {
+            dropUnrecordedTcfDecision(decision, configuration: configuration)
+        }
+    }
+
+    // The decision applies for this session whatever the record did: the keys are what vendor SDKs read now.
+    // A decision ConsentIQ did not record is not kept: a resend could not carry its TC string, so the next
+    // launch asks again with nothing granted, and the app is told.
+    private func dropUnrecordedTcfDecision(_ decision: TcfDecision, configuration: ConsentIQConfig) {
+        dropUnrecordedDecision(propertyKey: configuration.propertyKey)
+        storage.clearTcf()
+        let status = decision.recordStatus ?? 0
+        logger.error("TCF decision not recorded (status \(status))")
+        configuration.onError?(ConsentIQAPIError(statusCode: status, message: "TCF decision not recorded"))
+    }
+
+    // The page records this consent with ConsentIQ itself, so it is applied locally and never re-submitted.
     private func applyTcfDecision(_ decision: TcfDecision) {
         if let tcf = config?.tcf, let cmpId = tcf.cmpId {
             tcfKeys.takeOverCmp(id: cmpId, version: tcf.cmpVersion)

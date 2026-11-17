@@ -138,4 +138,17 @@ final class TcfMessageTests: XCTestCase {
         XCTAssertNil(config.tcf)
         XCTAssertEqual(config.property.id, "prop-1")
     }
+
+    func testDecisionReadsWhetherItWasRecorded() throws {
+        let json = #"{"type":"decision","keys":{},"recorded":false,"recordStatus":429}"#
+        guard case .decision(let decision)? = TcfPageMessage(json: json)?.message else { return XCTFail("not a decision") }
+        XCTAssertFalse(decision.recorded)
+        XCTAssertEqual(decision.recordStatus, 429)
+
+        guard case .decision(let older)? = TcfPageMessage(json: #"{"type":"decision","keys":{}}"#)?.message else {
+            return XCTFail("not a decision")
+        }
+        XCTAssertTrue(older.recorded)
+        XCTAssertNil(older.recordStatus)
+    }
 }

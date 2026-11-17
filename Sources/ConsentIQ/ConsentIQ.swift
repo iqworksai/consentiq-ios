@@ -439,7 +439,7 @@ public final class ConsentIQ: ObservableObject {
 
     /// The decision was never recorded and never will be: its local copy goes with it, and the next
     /// launch asks again with nothing granted rather than restoring an older choice.
-    private func dropUnrecordedDecision(propertyKey: String) {
+    func dropUnrecordedDecision(propertyKey: String) {
         storage.clearPendingDecision()
         storage.clearConsent()
         storage.markUnrecorded(propertyKey: propertyKey)

@@ -29,6 +29,10 @@ struct TcfDecision {
     let stored: [String: Any]?
     let consent: ConsentState?
     let scope: Scope?
+    /// Whether ConsentIQ recorded it. A page that predates the field reports nothing, which counts as recorded.
+    var recorded = true
+    /// The HTTP status of the refusal when it was not recorded; nil when the server never answered.
+    var recordStatus: Int?
 }
 
 enum TcfMessage {
@@ -67,7 +71,9 @@ struct TcfPageMessage {
                 keys: keys,
                 stored: object["stored"] as? [String: Any],
                 consent: consent(object["consent"]),
-                scope: (object["scope"] as? String).flatMap(TcfDecision.Scope.init(rawValue:))
+                scope: (object["scope"] as? String).flatMap(TcfDecision.Scope.init(rawValue:)),
+                recorded: object["recorded"] as? Bool ?? true,
+                recordStatus: (object["recordStatus"] as? NSNumber)?.intValue
             ))
         default:
             return nil
