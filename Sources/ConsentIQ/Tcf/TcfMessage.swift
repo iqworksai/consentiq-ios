@@ -93,6 +93,7 @@ struct TcfStartOptions {
     let reopen: Bool
     let token: String
     var subjectSource: SubjectSource?
+    var identityToken: String?
 
     var arguments: [String: Any] {
         var arguments: [String: Any] = [
@@ -103,6 +104,7 @@ struct TcfStartOptions {
             "token": token,
         ]
         if let subjectSource { arguments["subjectSource"] = subjectSource.rawValue }
+        if let identityToken { arguments["identityToken"] = identityToken }
         return arguments
     }
 }

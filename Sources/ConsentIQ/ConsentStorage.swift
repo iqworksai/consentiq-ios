@@ -6,6 +6,11 @@ public final class ConsentStorage: @unchecked Sendable {
     public static let subjectIdKey = "consentiq_subject_id"
     public static let tcfKey = "consentiq_tcf"
     public static let pendingKey = "consentiq_pending"
+    /// The subject the local copy was written for; a copy written for another subject is not theirs.
+    public static let consentSubjectKey = "consentiq_consent_subject"
+    /// Set to the property key when a decision was dropped without ConsentIQ recording it. While it
+    /// stands the sheet asks again with nothing granted. The next recorded decision clears it.
+    public static let unrecordedKey = "consentiq_unrecorded_decision"
 
     private let defaults: UserDefaults
 
@@ -23,8 +28,32 @@ public final class ConsentStorage: @unchecked Sendable {
         defaults.set(data, forKey: Self.consentKey)
     }
 
+    /// The local copy, only when it was written for this subject.
+    public func loadConsent(for subjectId: String) -> ConsentState? {
+        guard defaults.string(forKey: Self.consentSubjectKey) == subjectId else { return nil }
+        return loadConsent()
+    }
+
+    public func saveConsent(_ consent: ConsentState, for subjectId: String) {
+        saveConsent(consent)
+        defaults.set(subjectId, forKey: Self.consentSubjectKey)
+    }
+
     public func clearConsent() {
         defaults.removeObject(forKey: Self.consentKey)
+        defaults.removeObject(forKey: Self.consentSubjectKey)
+    }
+
+    func isUnrecorded(propertyKey: String) -> Bool {
+        defaults.string(forKey: Self.unrecordedKey) == propertyKey
+    }
+
+    func markUnrecorded(propertyKey: String) {
+        defaults.set(propertyKey, forKey: Self.unrecordedKey)
+    }
+
+    func clearUnrecorded() {
+        defaults.removeObject(forKey: Self.unrecordedKey)
     }
 
     public func loadSubjectId() -> String? {
@@ -82,6 +111,7 @@ public final class ConsentStorage: @unchecked Sendable {
         clearSubjectId()
         clearTcf()
         clearPendingDecision()
+        clearUnrecorded()
     }
 
     public static func generateSubjectId() -> String {
@@ -89,7 +119,8 @@ public final class ConsentStorage: @unchecked Sendable {
     }
 }
 
-/// A decision ConsentIQ asked to resend later (429), retried once per launch without a captcha.
+/// A decision ConsentIQ has not recorded yet (no answer, a 5xx, a 429, an unanswered challenge), resent
+/// once per launch without a captcha.
 struct PendingDecision: Codable, Equatable {
     static let maxAttempts = 3
     static let maxAge: TimeInterval = 7 * 24 * 60 * 60
@@ -102,6 +133,9 @@ struct PendingDecision: Codable, Equatable {
     var subjectId: String
     var propertyKey: String
     var apiURL: String
+    // What it was decided against: one made under another notice or category set is never resent.
+    var noticeVersion: Int?
+    var categoryCodes: [String]?
 
     func isSpent(at now: Date) -> Bool {
         attempts >= Self.maxAttempts || now.timeIntervalSince(createdAt) > Self.maxAge
@@ -110,11 +144,16 @@ struct PendingDecision: Codable, Equatable {
     func belongs(to subjectId: String, propertyKey: String, apiURL: String) -> Bool {
         self.subjectId == subjectId && self.propertyKey == propertyKey && self.apiURL == apiURL
     }
+
+    func matches(noticeVersion: Int?, categoryCodes: [String]) -> Bool {
+        self.noticeVersion == noticeVersion && (self.categoryCodes ?? []) == categoryCodes
+    }
 }
 
 extension ConsentIQAPIError {
-    /// A refusal that resending the same decision cannot change.
-    var dropsTheDecision: Bool {
-        [400, 404, 409, 422].contains(statusCode)
+    /// A refusal that resending the same decision cannot change: 400, 403, 404, 409, 422. No answer, a
+    /// 5xx, a 429 or a challenge left unanswered may go through later.
+    static func isFinal(_ statusCode: Int) -> Bool {
+        [400, 403, 404, 409, 422].contains(statusCode)
     }
 }

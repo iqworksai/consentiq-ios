@@ -83,7 +83,8 @@ extension ConsentIQ {
             consent: consent,
             reopen: reopen,
             token: UUID().uuidString,
-            subjectSource: subjectSource
+            subjectSource: subjectSource,
+            identityToken: identityTokenForSubject
         )
         let session = TcfSession(
             page: page,
@@ -161,7 +162,9 @@ extension ConsentIQ {
         }
         if let decided = decision.consent {
             consent = decided.forcingNecessary()
-            storage.saveConsent(consent)
+            if let subjectId {
+                storage.saveConsent(consent, for: subjectId)
+            }
         }
         logger.debug("TCF decision applied")
     }

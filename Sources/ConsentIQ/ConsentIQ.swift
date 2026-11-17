@@ -112,9 +112,15 @@ public final class ConsentIQ: ObservableObject {
 
             var foundExistingConsent = false
             if let subjectId {
-                foundExistingConsent = await restoreConsent(client: client, subjectId: subjectId)
-                if await resendPendingDecision(client: client, subjectId: subjectId) {
-                    foundExistingConsent = true
+                // A decision dropped unrecorded leaves nothing granted: neither an older server record nor
+                // the local copy answers for it, so the sheet asks again.
+                if !storage.isUnrecorded(propertyKey: config.propertyKey) {
+                    foundExistingConsent = await restoreConsent(client: client, subjectId: subjectId)
+                }
+                switch await resendPendingDecision(client: client, subjectId: subjectId) {
+                case .recorded: foundExistingConsent = true
+                case .dropped: foundExistingConsent = false
+                case .none: break
                 }
             }
             hasExistingConsent = foundExistingConsent
@@ -263,6 +269,13 @@ public final class ConsentIQ: ObservableObject {
         } else {
             do {
                 lookup = try await client.getConsent(subjectId: subjectId, identityToken: siteSubject ? identityToken : nil)
+            } catch let error as ConsentIQAPIError where error.statusCode == 403 {
+                // The token did not verify for this subject, so this device's copy cannot answer for them:
+                // the sheet asks again, and the app is told.
+                logger.error("Consent lookup refused: \(error.localizedDescription)")
+                storage.clearConsent()
+                configuration?.onError?(error)
+                return false
             } catch {
                 logger.debug("Consent lookup failed: \(error.localizedDescription)")
                 lookup = nil
@@ -275,7 +288,7 @@ public final class ConsentIQ: ObservableObject {
             if let marketing = saved.marketingConsents {
                 marketingConsent = marketing
             }
-            storage.saveConsent(consent)
+            storage.saveConsent(consent, for: subjectId)
             return true
         }
         if lookup?.expired == true {
@@ -284,7 +297,7 @@ public final class ConsentIQ: ObservableObject {
             tcfKeys.clearDecision()
             return false
         }
-        if let local = storage.loadConsent() {
+        if let local = storage.loadConsent(for: subjectId) {
             consent = local.forcingNecessary()
             return true
         }
@@ -308,6 +321,15 @@ public final class ConsentIQ: ObservableObject {
         guard let provided = configuration?.subjectId, !provided.isEmpty, provided == subjectId else { return nil }
         return .site
     }
+
+    /// The identity token, only where it can verify: with the app's own subject id. A generated id is
+    /// random, so a token signed for the app's user never matches it.
+    var identityTokenForSubject: String? {
+        subjectSource == .site ? configuration?.identityToken : nil
+    }
+
+    private var noticeVersion: Int? { config?.banner?.noticeVersion }
+    private var categoryCodes: [String] { (config?.categories ?? []).map(\.code).sorted() }
 
     private func resolveCaptchaProvider(for propertyConfig: PropertyConfig, config: ConsentIQConfig) {
         guard propertyConfig.requireCaptcha else {
@@ -339,18 +361,25 @@ public final class ConsentIQ: ObservableObject {
             logger.debug("Skipping consent submit: no subject id")
             return
         }
-        // A new decision replaces any earlier one still waiting to be resent.
-        storage.clearPendingDecision()
+        // The decision applies at once and stands locally; the server record makes it stand across launches.
+        storage.saveConsent(cookieConsents, for: subjectId)
         let generation = resetGeneration
+        let decision = UnrecordedDecision(
+            cookieConsents: cookieConsents,
+            marketingConsents: marketingConsents,
+            subjectId: subjectId,
+            generation: generation
+        )
         let captchaToken: String?
         do {
             captchaToken = try await self.captchaToken()
         } catch {
             logger.debug("Captcha token unavailable: \(error)")
             logger.warning(ConsentIQLogger.captchaFailedWarning)
+            settleFailure(error, status: nil, decision: decision)
             return
         }
-        let identityToken = configuration?.identityToken
+        let identityToken = identityTokenForSubject
         let subjectSource = subjectSource
         do {
             _ = try await submitAnsweringChallenge(firstToken: captchaToken, provider: challengeProvider) { token in
@@ -365,69 +394,84 @@ public final class ConsentIQ: ObservableObject {
                     subjectSource: subjectSource
                 ))
             }
+            guard generation == resetGeneration else { return }
             storage.clearPendingDecision()
-            storage.saveConsent(cookieConsents)
+            storage.clearUnrecorded()
             configuration?.onConsentChange?(cookieConsents, marketingConsents)
         } catch let error as CaptchaError {
             logger.debug("Captcha token unavailable: \(error)")
             logger.warning(ConsentIQLogger.captchaFailedWarning)
+            settleFailure(error, status: nil, decision: decision)
         } catch let error as ConsentIQAPIError {
             logger.error("Failed to submit consent: \(error.localizedDescription)")
-            handleRefusal(
-                error,
-                cookieConsents: cookieConsents,
-                marketingConsents: marketingConsents,
-                subjectId: subjectId,
-                generation: generation
-            )
+            settleFailure(error, status: error.statusCode, decision: decision)
         } catch {
             logger.error("Failed to submit consent: \(error.localizedDescription)")
+            settleFailure(error, status: nil, decision: decision)
         }
     }
 
-    // 429 keeps the decision for one quiet retry per launch; a refusal resending cannot change drops
-    // it; 403 (an identity token that did not verify, or one the property requires) goes to the app.
-    private func handleRefusal(
-        _ error: ConsentIQAPIError,
-        cookieConsents: ConsentState,
-        marketingConsents: MarketingConsentState,
-        subjectId: String,
-        generation: Int
-    ) {
-        switch error.statusCode {
-        case 429 where config?.requiresCaptchaToken != true:
-            guard generation == resetGeneration, let configuration else { return }
-            storage.savePendingDecision(PendingDecision(
-                cookieConsents: cookieConsents,
-                marketingConsents: marketingConsents,
-                attempts: 0,
-                createdAt: now(),
-                subjectId: subjectId,
-                propertyKey: configuration.propertyKey,
-                apiURL: configuration.apiURL.absoluteString
-            ))
-        case 403:
+    /// A submit ConsentIQ did not record. Retryable (no answer, a 5xx, a 429, an unanswered challenge)
+    /// keeps it as the pending decision, replacing any earlier one. Anything else, or any failure on a
+    /// property that requires a captcha on every submit (a resend cannot carry one), is final: the
+    /// decision and its local copy are dropped, the next launch asks again, and the app is told.
+    private func settleFailure(_ error: Error, status: Int?, decision: UnrecordedDecision) {
+        // A submit that started before a reset belongs to the state the reset cleared.
+        guard decision.generation == resetGeneration, let configuration else { return }
+        let final = status.map(ConsentIQAPIError.isFinal) ?? false
+        if final || config?.requiresCaptchaToken == true {
+            dropUnrecordedDecision(propertyKey: configuration.propertyKey)
+            configuration.onError?(error)
+            return
+        }
+        storage.savePendingDecision(PendingDecision(
+            cookieConsents: decision.cookieConsents,
+            marketingConsents: decision.marketingConsents,
+            attempts: 0,
+            createdAt: now(),
+            subjectId: decision.subjectId,
+            propertyKey: configuration.propertyKey,
+            apiURL: configuration.apiURL.absoluteString,
+            noticeVersion: noticeVersion,
+            categoryCodes: categoryCodes
+        ))
+    }
+
+    /// The decision was never recorded and never will be: its local copy goes with it, and the next
+    /// launch asks again with nothing granted rather than restoring an older choice.
+    private func dropUnrecordedDecision(propertyKey: String) {
+        storage.clearPendingDecision()
+        storage.clearConsent()
+        storage.markUnrecorded(propertyKey: propertyKey)
+    }
+
+    private enum ResendOutcome { case none, recorded, dropped }
+
+    private struct UnrecordedDecision {
+        let cookieConsents: ConsentState
+        let marketingConsents: MarketingConsentState
+        let subjectId: String
+        let generation: Int
+    }
+
+    /// Resends a decision ConsentIQ has not recorded, once per launch and never with a captcha. Recorded
+    /// means the sheet need not ask again; dropped means it must, with nothing granted.
+    private func resendPendingDecision(client: ConsentIQAPIClient, subjectId: String) async -> ResendOutcome {
+        guard var pending = storage.loadPendingDecision(), let configuration else { return .none }
+        guard pending.belongs(to: subjectId, propertyKey: configuration.propertyKey, apiURL: configuration.apiURL.absoluteString) else {
+            // Another person's, property's or server's: never sent here.
             storage.clearPendingDecision()
-            configuration?.onError?(error)
-        default:
-            if error.dropsTheDecision {
-                storage.clearPendingDecision()
-            }
+            return .none
         }
-    }
-
-    /// Resends a decision kept after a 429, once per launch and never with a captcha. True when it
-    /// was recorded, so the sheet need not ask again.
-    private func resendPendingDecision(client: ConsentIQAPIClient, subjectId: String) async -> Bool {
-        guard var pending = storage.loadPendingDecision() else { return false }
-        let owned = configuration.map {
-            pending.belongs(to: subjectId, propertyKey: $0.propertyKey, apiURL: $0.apiURL.absoluteString)
-        } ?? false
         // A record the server made after this decision is the newer choice, so it wins.
-        let superseded = serverConsentedAt.map { $0 > pending.createdAt } ?? false
-        if !owned || superseded || pending.isSpent(at: now()) || config?.requiresCaptchaToken == true {
+        if let serverConsentedAt, serverConsentedAt > pending.createdAt {
             storage.clearPendingDecision()
-            return false
+            return .none
+        }
+        if pending.isSpent(at: now())
+            || !pending.matches(noticeVersion: noticeVersion, categoryCodes: categoryCodes)
+            || config?.requiresCaptchaToken == true {
+            return dropAtLaunch(propertyKey: configuration.propertyKey)
         }
         pending.attempts += 1
         storage.savePendingDecision(pending)
@@ -438,28 +482,36 @@ public final class ConsentIQ: ObservableObject {
                 cookieConsents: pending.cookieConsents,
                 marketingConsents: pending.marketingConsents,
                 consentMethod: .sdk,
-                identityToken: configuration?.identityToken,
-                subjectSource: subjectSource
+                identityToken: identityTokenForSubject,
+                subjectSource: subjectSource,
+                noticeVersion: pending.noticeVersion
             ))
         } catch let error as ConsentIQAPIError {
             logger.debug("Pending consent not recorded: \(error.localizedDescription)")
-            if error.statusCode == 403 {
-                storage.clearPendingDecision()
-                configuration?.onError?(error)
-            } else if error.dropsTheDecision {
-                storage.clearPendingDecision()
+            if ConsentIQAPIError.isFinal(error.statusCode) {
+                configuration.onError?(error)
+                return dropAtLaunch(propertyKey: configuration.propertyKey)
             }
-            return false
+            return .none
         } catch {
             logger.debug("Pending consent not recorded: \(error.localizedDescription)")
-            return false
+            return .none
         }
         storage.clearPendingDecision()
+        storage.clearUnrecorded()
         consent = pending.cookieConsents.forcingNecessary()
         marketingConsent = pending.marketingConsents
-        storage.saveConsent(consent)
-        configuration?.onConsentChange?(consent, marketingConsent)
-        return true
+        storage.saveConsent(consent, for: subjectId)
+        configuration.onConsentChange?(consent, marketingConsent)
+        return .recorded
+    }
+
+    /// At launch the dropped decision's local copy may already be applied, so it is taken back too.
+    private func dropAtLaunch(propertyKey: String) -> ResendOutcome {
+        dropUnrecordedDecision(propertyKey: propertyKey)
+        consent = ConsentIQ.defaultConsent
+        marketingConsent = [:]
+        return .dropped
     }
 
     static func parseTimestamp(_ value: String) -> Date? {

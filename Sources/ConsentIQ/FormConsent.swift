@@ -17,6 +17,10 @@ public final class FormConsent: ObservableObject {
     public var subjectId: String
     public var subjectType: SubjectType
     public var identityToken: String?
+    /// The identifier `identityToken` was signed for. When the subject id is that identifier written
+    /// differently (an email's case, a phone's spacing) the signed form is sent; any other subject goes
+    /// unsigned, since the token cannot verify for it.
+    public var identityFor: String?
     /// `.site` unless the form borrowed the subject id ConsentIQ generated.
     var subjectSource: SubjectSource? = .site
     public var onConsentSubmitted: ((FormConsentResult) -> Void)?
@@ -39,6 +43,7 @@ public final class FormConsent: ObservableObject {
         session: URLSession = .shared,
         debug: Bool = false,
         identityToken: String? = nil,
+        identityFor: String? = nil,
         onConsentSubmitted: ((FormConsentResult) -> Void)? = nil,
         onConsentChange: ((MarketingConsentState) -> Void)? = nil
     ) {
@@ -56,6 +61,7 @@ public final class FormConsent: ObservableObject {
             captchaProviderFactory: { makeDefaultCaptchaProvider(apiURL: $0, propertyKey: $1) }
         )
         self.identityToken = identityToken
+        self.identityFor = identityFor
     }
 
     init(
@@ -93,6 +99,7 @@ public final class FormConsent: ObservableObject {
         subjectType: SubjectType = .user,
         channels: [String] = FormConsent.defaultChannels,
         identityToken: String? = nil,
+        identityFor: String? = nil,
         onConsentSubmitted: ((FormConsentResult) -> Void)? = nil,
         onConsentChange: ((MarketingConsentState) -> Void)? = nil
     ) {
@@ -112,6 +119,7 @@ public final class FormConsent: ObservableObject {
             appAttestorFactory: consentIQ.appAttestorFactory
         )
         self.identityToken = identityToken
+        self.identityFor = identityFor
         if subjectId == nil { self.subjectSource = consentIQ.subjectSource }
     }
 
@@ -144,16 +152,20 @@ public final class FormConsent: ObservableObject {
             logger.warning(ConsentIQLogger.captchaFailedWarning)
             return nil
         }
+        // A token travels only with an id the app chose; a generated id is random, so it could never verify.
+        let signed = subjectSource == .site
+            ? signedSubject(identityToken: identityToken, identityFor: identityFor, identifier: subjectId)
+            : (subjectId: subjectId, identityToken: nil)
         do {
             let response = try await submitAnsweringChallenge(firstToken: captchaToken, provider: { captchaProvider }) { token in
                 try await apiClient.submitConsent(ConsentSubmission(
                     propertyKey: apiClient.propertyKey,
-                    subjectId: subjectId,
+                    subjectId: signed.subjectId,
                     subjectType: subjectType,
                     marketingConsents: consents,
                     consentMethod: .form,
                     captchaToken: token,
-                    identityToken: identityToken,
+                    identityToken: signed.identityToken,
                     subjectSource: subjectSource
                 ))
             }

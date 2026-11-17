@@ -18,7 +18,8 @@ enum Fixtures {
         turnstileSiteKey: String? = nil,
         defaultLanguage: String? = "en",
         resolvedRegulation: String? = "DPDPA",
-        tcf: String? = nil
+        tcf: String? = nil,
+        noticeVersion: Int? = nil
     ) -> String {
         let language = defaultLanguage.map { "\"\($0)\"" } ?? "null"
         let regulation = resolvedRegulation.map { "\"\($0)\"" } ?? "null"
@@ -33,7 +34,7 @@ enum Fixtures {
           "banner": {
             "position": "bottom", "layout": "banner", "theme": "dark", "showLogo": false,
             "primaryColor": "#112233", "cornerStyle": "rounded", "showCookieIcon": false, "overlay": false,
-            "noticeUrl": "https://consent.example.test/api/public/privacy/\(propertyKey)?notice=n-1"
+            "noticeUrl": "https://consent.example.test/api/public/privacy/\(propertyKey)?notice=n-1"\(noticeVersion.map { ", \"noticeVersion\": \($0)" } ?? "")
           },
           "categories": [
             { "code": "necessary", "enabled": true, "defaultState": true, "name": "Necessary", "isRequired": true },

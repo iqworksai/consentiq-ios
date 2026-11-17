@@ -118,11 +118,14 @@ final class ConsentIQCaptchaTests: XCTestCase {
         XCTAssertEqual(posts.count, 2)
         XCTAssertEqual(captcha.tokenCount, 1)
         XCTAssertEqual(changes, 0)
-        XCTAssertNil(storage.loadConsent())
+        // A challenge left unanswered may pass later: the decision stands locally and waits to be resent.
+        XCTAssertNotNil(storage.loadConsent())
+        XCTAssertNotNil(storage.loadPendingDecision())
     }
 
     func testACancelledOrTimedOutChallengeSendsNothingMore() async {
         for failure in [CaptchaError.cancelled, CaptchaError.timedOut] {
+            storage.clearAll()
             StubURLProtocol.reset()
             StubURLProtocol.stubFallback(StubResponse(json: Fixtures.noConsentJSON))
             stubConfig(Fixtures.configJSON())
@@ -135,7 +138,7 @@ final class ConsentIQCaptchaTests: XCTestCase {
             await sdk.acceptAll()
 
             XCTAssertEqual(posts.count, 1, "\(failure)")
-            XCTAssertNil(storage.loadConsent(), "\(failure)")
+            XCTAssertNotNil(storage.loadPendingDecision(), "\(failure)")
             XCTAssertEqual(logLines.filter { $0 == "[ConsentIQ] Captcha check failed; consent not submitted" }.count, 1, "\(logLines)")
         }
     }
@@ -152,10 +155,11 @@ final class ConsentIQCaptchaTests: XCTestCase {
         XCTAssertEqual(captcha.tokenCount, 0)
     }
 
-    func testSendsTheIdentityTokenWithEverySubmit() async throws {
+    func testSendsTheIdentityTokenWithEverySubmitForTheAppsOwnSubject() async throws {
         stubConfig(Fixtures.configJSON())
         let sdk = makeSDK()
         var configuration = config()
+        configuration.subjectId = "user-42"
         configuration.identityToken = "v2.1700000000.abc"
         await sdk.initialize(configuration)
 
@@ -163,6 +167,38 @@ final class ConsentIQCaptchaTests: XCTestCase {
         await sdk.rejectAll()
 
         XCTAssertEqual(posts.map { $0.json?["identityToken"] as? String }, ["v2.1700000000.abc", "v2.1700000000.abc"])
+    }
+
+    func testNeverSendsTheIdentityTokenWithAGeneratedSubject() async throws {
+        stubConfig(Fixtures.configJSON())
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.identityToken = "v2.1700000000.abc"
+        await sdk.initialize(configuration)
+
+        await sdk.acceptAll()
+
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertNil(posts[0].json?["identityToken"])
+    }
+
+    func testARefusedRestoreDropsTheLocalCopyAsksAgainAndTellsTheApp() async throws {
+        stubConfig(Fixtures.configJSON())
+        let refused = StubResponse(status: 403, json: #"{"error":"Identity token did not verify"}"#)
+        StubURLProtocol.stub("POST", Fixtures.consentLookupPath("user-42"), refused)
+        storage.saveConsent(["necessary": true, "analytics": true], for: "user-42")
+        var errors: [Error] = []
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.subjectId = "user-42"
+        configuration.identityToken = "v2.1.sig"
+        configuration.onError = { errors.append($0) }
+        await sdk.initialize(configuration)
+
+        XCTAssertNil(storage.loadConsent(for: "user-42"))
+        XCTAssertEqual(sdk.consent["analytics"], false)
+        XCTAssertTrue(sdk.isSheetVisible)
+        XCTAssertEqual((errors.first as? ConsentIQAPIError)?.statusCode, 403)
     }
 
     func testMarksAnAppChosenSubjectAsSiteAndAGeneratedOneNot() async throws {
@@ -199,7 +235,7 @@ final class ConsentIQCaptchaTests: XCTestCase {
 
     func testNeverLooksUpAnAppChosenSubjectWithoutATokenAndKeepsTheLocalCopy() async throws {
         stubConfig(Fixtures.configJSON())
-        storage.saveConsent(["necessary": true, "analytics": true])
+        storage.saveConsent(["necessary": true, "analytics": true], for: "user-42")
         let sdk = makeSDK()
         var configuration = config()
         configuration.subjectId = "user-42"

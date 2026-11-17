@@ -185,10 +185,12 @@ final class PendingDecisionTests: XCTestCase {
         refuse(500)
         await sdk.rejectAll()
 
-        XCTAssertNil(storage.loadPendingDecision())
+        // The newer choice replaces the one waiting, and it is the one resent.
+        XCTAssertEqual(storage.loadPendingDecision()?.cookieConsents["analytics"], false)
         accept()
         _ = await launch()
-        XCTAssertEqual(posts.count, 2)
+        XCTAssertEqual(posts.count, 3)
+        XCTAssertEqual((posts[2].json?["cookieConsents"] as? [String: Bool])?["analytics"], false)
     }
 
     func testANewerRecordOnTheServerWinsOverTheWaitingDecision() async {
@@ -249,5 +251,147 @@ final class PendingDecisionTests: XCTestCase {
         storage.clearAll()
 
         XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    // MARK: - Retryable and final failures, and the unrecorded marker
+
+    private func noticeVersion(_ version: Int) {
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.configJSON(noticeVersion: version)))
+    }
+
+    func testEveryRetryableFailureKeepsTheDecision() async {
+        for status in [428, 500, 503] {
+            storage.clearAll()
+            StubURLProtocol.reset()
+            StubURLProtocol.stubFallback(StubResponse(json: Fixtures.noConsentJSON))
+            StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: Fixtures.configJSON()))
+            captcha.result = .failure(CaptchaError.cancelled)
+            refuse(status)
+            let sdk = await launch()
+            await sdk.acceptAll()
+            XCTAssertNotNil(storage.loadPendingDecision(), "\(status)")
+            XCTAssertEqual(storage.loadConsent(for: sdk.subjectId!)?["analytics"], true, "\(status)")
+            XCTAssertTrue(errors.isEmpty, "\(status)")
+        }
+    }
+
+    func testAnAnswerThatCannotBeReadKeepsTheDecision() async {
+        StubURLProtocol.stub("POST", Fixtures.consentPath, StubResponse(json: "not json"))
+        let sdk = await launch()
+        await sdk.acceptAll()
+        XCTAssertNotNil(storage.loadPendingDecision())
+    }
+
+    func testAFinalRefusalDropsTheDecisionAndItsLocalCopyMarksItAndTellsTheApp() async {
+        for status in [400, 403, 404, 409, 422] {
+            storage.clearAll()
+            errors = []
+            refuse(status)
+            let sdk = await launch()
+            await sdk.acceptAll()
+            XCTAssertNil(storage.loadPendingDecision(), "\(status)")
+            XCTAssertNil(storage.loadConsent(for: sdk.subjectId!), "\(status)")
+            XCTAssertTrue(storage.isUnrecorded(propertyKey: Fixtures.propertyKey), "\(status)")
+            XCTAssertEqual((errors.first as? ConsentIQAPIError)?.statusCode, status)
+        }
+    }
+
+    func testWhileTheMarkerStandsTheNextLaunchRestoresNothingAndAsks() async throws {
+        refuse(400)
+        let first = await launch()
+        await first.acceptAll()
+        let lookup = Fixtures.consentLookupPath(try XCTUnwrap(first.subjectId))
+        StubURLProtocol.stub("GET", lookup, StubResponse(json: Fixtures.savedConsentJSON))
+        let lookupsBefore = StubURLProtocol.requests(matching: "GET", lookup).count
+
+        let second = await launch()
+
+        XCTAssertEqual(StubURLProtocol.requests(matching: "GET", lookup).count, lookupsBefore)
+        XCTAssertEqual(second.consent, ConsentIQ.defaultConsent)
+        XCTAssertFalse(second.hasExistingConsent)
+    }
+
+    func testTheNextRecordedDecisionClearsTheMarker() async {
+        refuse(400)
+        let sdk = await launch()
+        await sdk.acceptAll()
+        accept()
+        await sdk.rejectAll()
+        XCTAssertFalse(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+    }
+
+    func testAnyFailureOnARequireCaptchaPropertyIsFinal() async {
+        let requiresCaptcha = Fixtures.configJSON(requireCaptcha: true, turnstileSiteKey: "site")
+        StubURLProtocol.stub("GET", Fixtures.configPath, StubResponse(json: requiresCaptcha))
+        refuse(503)
+        let sdk = await launch()
+        await sdk.acceptAll()
+        XCTAssertNil(storage.loadPendingDecision())
+        XCTAssertTrue(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+        XCTAssertEqual(errors.count, 1)
+    }
+
+    func testAPendingDecisionCarriesItsNoticeVersionAndIsResentWithIt() async {
+        noticeVersion(4)
+        refuse(429)
+        await launch().acceptAll()
+        XCTAssertEqual(storage.loadPendingDecision()?.noticeVersion, 4)
+
+        accept()
+        _ = await launch()
+        XCTAssertEqual(posts.last?.json?["noticeVersion"] as? Int, 4)
+    }
+
+    func testAPendingDecisionMadeUnderAnotherNoticeIsDroppedAndMarked() async {
+        noticeVersion(4)
+        refuse(429)
+        await launch().acceptAll()
+
+        noticeVersion(5)
+        accept()
+        let sdk = await launch()
+
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertNil(storage.loadPendingDecision())
+        XCTAssertTrue(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+        XCTAssertEqual(sdk.consent, ConsentIQ.defaultConsent)
+    }
+
+    func testASpentPendingDecisionIsDroppedWithItsLocalCopyAndMarked() async throws {
+        refuse(429)
+        let first = await launch()
+        await first.acceptAll()
+        let subjectId = try XCTUnwrap(first.subjectId)
+
+        _ = await launch(at: Date().addingTimeInterval(8 * 24 * 60 * 60))
+
+        XCTAssertNil(storage.loadPendingDecision())
+        XCTAssertNil(storage.loadConsent(for: subjectId))
+        XCTAssertTrue(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+    }
+
+    func testAFinalRefusalOfAResendTellsTheApp() async {
+        refuse(429)
+        await launch().acceptAll()
+        refuse(422)
+        _ = await launch()
+        XCTAssertEqual((errors.first as? ConsentIQAPIError)?.statusCode, 422)
+        XCTAssertTrue(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+    }
+
+    func testResetClearsTheMarkerAndThePendingDecision() async {
+        refuse(400)
+        let sdk = await launch()
+        await sdk.acceptAll()
+        sdk.resetConsent()
+        XCTAssertFalse(storage.isUnrecorded(propertyKey: Fixtures.propertyKey))
+        XCTAssertNil(storage.loadPendingDecision())
+    }
+
+    func testALocalCopyWrittenForAnotherSubjectIsNotInherited() async {
+        storage.saveConsent(["necessary": true, "analytics": true], for: "user-a")
+        let sdk = await launch(subjectId: "user-b")
+        XCTAssertEqual(sdk.consent, ConsentIQ.defaultConsent)
+        XCTAssertFalse(sdk.hasExistingConsent)
     }
 }

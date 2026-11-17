@@ -236,7 +236,7 @@ final class ConsentIQTcfTests: TcfSDKTestCase {
     func testReopenStartsWithStoredStateAndCloseKeepsKeys() async throws {
         stubConfig(tcf: Fixtures.tcfJSON())
         storage.saveTcfStored(["tcString": "CQ-old", "vendorIds": [1], "restrictionsKey": ""])
-        storage.saveConsent(["necessary": true, "analytics": true])
+        storage.saveConsent(["necessary": true, "analytics": true], for: storage.getOrCreateSubjectId())
         standard.set("CQ-old", forKey: "IABTCF_TCString")
         page.onStart = [FakeTcfPage.current]
         let sdk = makeSDK()
@@ -280,5 +280,35 @@ final class ConsentIQTcfTests: TcfSDKTestCase {
         await sdk.tcfTask?.value
         XCTAssertEqual(page.startOptions.count, 2, "the next explicit open retries the TCF screens")
         XCTAssertFalse(sdk.isSheetVisible)
+    }
+
+    func testTheAppsOwnSubjectStartsThePageWithItsIdentityToken() async throws {
+        stubConfig(tcf: Fixtures.tcfJSON())
+        page.onStart = [FakeTcfPage.show]
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.subjectId = "user-42"
+        configuration.identityToken = "v2.1.sig"
+        await sdk.initialize(configuration)
+        await waitUntil { [self] in !page.presented.isEmpty }
+
+        let options = try XCTUnwrap(page.startOptions.first)
+        XCTAssertEqual(options.arguments["identityToken"] as? String, "v2.1.sig")
+        XCTAssertEqual(options.arguments["subjectSource"] as? String, "site")
+        sdk.endTcfSession()
+    }
+
+    func testAGeneratedSubjectStartsThePageWithoutAToken() async throws {
+        stubConfig(tcf: Fixtures.tcfJSON())
+        page.onStart = [FakeTcfPage.show]
+        let sdk = makeSDK()
+        var configuration = config()
+        configuration.identityToken = "v2.1.sig"
+        await sdk.initialize(configuration)
+        await waitUntil { [self] in !page.presented.isEmpty }
+
+        let options = try XCTUnwrap(page.startOptions.first)
+        XCTAssertNil(options.arguments["identityToken"])
+        sdk.endTcfSession()
     }
 }

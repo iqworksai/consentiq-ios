@@ -147,7 +147,7 @@ final class ConsentIQStateTests: XCTestCase {
     func testLocalCacheSkipsSheetWhenServerHasNothing() async {
         stubConfig()
         stubConsentLookup(Fixtures.noConsentJSON)
-        storage.saveConsent(["necessary": false, "analytics": true, "marketing": false])
+        storage.saveConsent(["necessary": false, "analytics": true, "marketing": false], for: storage.getOrCreateSubjectId())
         var opened = 0
         let sdk = makeSDK()
 
@@ -162,7 +162,7 @@ final class ConsentIQStateTests: XCTestCase {
     func testConsentLookupFailureFallsBackToLocalCache() async {
         stubConfig()
         StubURLProtocol.stubFallback(StubResponse(status: 500, json: #"{"error":"Internal server error"}"#))
-        storage.saveConsent(["necessary": true, "analytics": true])
+        storage.saveConsent(["necessary": true, "analytics": true], for: storage.getOrCreateSubjectId())
         let sdk = makeSDK()
 
         await sdk.initialize(config())
@@ -415,7 +415,7 @@ final class ConsentIQStateTests: XCTestCase {
         XCTAssertEqual(body["cookieConsents"] as? [String: Bool], sdk.consent)
     }
 
-    func testFailedPostKeepsLocalStateWithoutCacheOrCallback() async {
+    func testFailedPostKeepsTheDecisionLocallyAndPendingWithoutCallback() async throws {
         stubConfig()
         stubConsentLookup(Fixtures.noConsentJSON)
         stubSubmit(status: 500)
@@ -430,7 +430,8 @@ final class ConsentIQStateTests: XCTestCase {
         XCTAssertFalse(sdk.isSheetVisible)
         XCTAssertEqual(accepted, 1)
         XCTAssertEqual(changes, 0)
-        XCTAssertNil(storage.loadConsent())
+        XCTAssertEqual(storage.loadConsent(for: try XCTUnwrap(sdk.subjectId))?["analytics"], true)
+        XCTAssertNotNil(storage.loadPendingDecision())
         XCTAssertTrue(logLines.contains { $0.hasPrefix("[ConsentIQ] Failed to submit consent: Failed to save consent") }, "\(logLines)")
     }
 

@@ -266,4 +266,39 @@ final class FormConsentTests: XCTestCase {
         XCTAssertTrue(StubURLProtocol.requests(matching: "POST", Fixtures.consentPath).isEmpty)
         XCTAssertTrue(logLines.contains { $0.contains("may not contain ':'") })
     }
+
+    func testFormSendsTheSignedIdentifierWhenTheSubjectIsItWrittenDifferently() async throws {
+        stubSubmit()
+        let form = makeForm(subjectId: "Alice@Example.com")
+        form.identityToken = "v2.1.sig"
+        form.identityFor = "alice@example.com"
+
+        _ = await form.submit()
+
+        XCTAssertEqual(posts.first?.json?["subjectId"] as? String, "alice@example.com")
+        XCTAssertEqual(posts.first?.json?["identityToken"] as? String, "v2.1.sig")
+    }
+
+    func testFormSendsAnotherSubjectUnsigned() async throws {
+        stubSubmit()
+        let form = makeForm(subjectId: "bob@example.com")
+        form.identityToken = "v2.1.sig"
+        form.identityFor = "alice@example.com"
+
+        _ = await form.submit()
+
+        XCTAssertEqual(posts.first?.json?["subjectId"] as? String, "bob@example.com")
+        XCTAssertNil(posts.first?.json?["identityToken"])
+    }
+
+    func testFormBorrowingAGeneratedSubjectSendsNoToken() async throws {
+        stubSubmit()
+        let form = makeForm()
+        form.subjectSource = nil
+        form.identityToken = "v2.1.sig"
+
+        _ = await form.submit()
+
+        XCTAssertNil(posts.first?.json?["identityToken"])
+    }
 }

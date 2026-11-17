@@ -141,8 +141,8 @@ of the same app use the iOS key.
 | `language` | `nil` | Override the property's default language, for example `"ar-EG"` |
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |
 | `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq`. Turn it on in debug builds only |
-| `identityToken` | `nil` | Your server's signature for this person, sent with every submission. ConsentIQ verifies it and marks the record verified by your organization. Sign on your server, never in the app |
-| `onError` | `nil` | Called when the SDK recovers from a failure: a TCF screen that could not load or answer, or a submission ConsentIQ refused with 403 (an identity token that did not verify, or one the property requires) |
+| `identityToken` | `nil` | Your server's signature for this person, sent with every submission for the `subjectId` you supply (never with a generated id, which it cannot match). ConsentIQ verifies it and marks the record verified by your organization. Sign on your server, never in the app |
+| `onError` | `nil` | Called when the SDK recovers from a failure: a TCF screen that could not load or answer, a decision ConsentIQ refused for good (`400`, `403`, `404`, `409`, `422`, or any failure on a property that requires a captcha on every submit), or a restore refused with `403` |
 
 `ConsentIQ` (`@MainActor`, `ObservableObject`, use `ConsentIQ.shared`)
 
@@ -158,20 +158,27 @@ of the same app use the iOS key.
 | `updateConsent(_:)`, `updateMarketingConsent(_:)` | Merge a partial map and record it |
 | `showSheet()`, `hideSheet()`, `dismissSheet()` | Open, close silently, or close as a visitor back-out |
 | `showPrivacyChoices()` | Open the visitor's choices: the TCF screens when TCF is active, otherwise the sheet |
-| `resetConsent()` | Clear the local cache and subject id and return to defaults |
+| `resetConsent()` | Clear the local cache, any decision waiting to be resent, and the subject id, and return to defaults |
 | `presentSheet(from:)`, `presentPrivacyChoices(from:)` | UIKit presentation of the same choices |
 
-Every write updates local state first, posts to ConsentIQ, persists the cache, then calls
-`onConsentChange`. A failed post is logged and local state is kept. When ConsentIQ answers
-`429 Too many requests`, the decision is kept and sent once more on each of the next launches,
-without a captcha, until it is recorded, three attempts have been made, or seven days have passed.
-A `400`, `404`, `409` or `422` answer drops it, and a `403` is passed to `onError` and not retried.
-It is resent only for the same subject id, property and API URL, a newer decision replaces it, and
-a newer record on ConsentIQ for that person wins over it.
+Every write updates local state and the local copy first, then posts to ConsentIQ, and calls
+`onConsentChange` once it is recorded. The local copy belongs to the subject id it was written for;
+another subject never inherits it. When the post gets no answer, a `5xx`, `429 Too many requests` or
+a challenge left unanswered, the decision is kept and sent once more on each of the next launches,
+without a captcha, until it is recorded, three attempts have been made, seven days have passed, or
+the banner's notice or categories changed. It carries the notice version it was made under. A `400`,
+`403`, `404`, `409` or `422` answer, or any failure on a property that requires a captcha on every
+submit, is final: the decision and its local copy are dropped, `onError` is called, and the next
+launch asks again with nothing granted rather than restoring an older choice. A decision is resent
+only for the same subject id, property and API URL, a newer decision replaces it, and a newer
+record on ConsentIQ for that person wins over it. A restore refused with `403` drops the local copy
+too, calls `onError`, and shows the sheet.
 
 `FormConsent` mirrors the marketing consent form helper: `toggle(_:)`, `set(_:_:)`, `submit()`
 (posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`. Set
-its `identityToken` to send your server's signature with the form.
+its `identityToken` to send your server's signature with the form, and `identityFor` to the
+identifier it was signed for: when the subject id is that identifier written differently (an
+email's case, a phone's spacing) the signed form is sent, and any other subject goes unsigned.
 Build one with `FormConsent(consentIQ: .shared)` after initialization, or with an explicit
 `propertyKey` and `subjectId`.
 

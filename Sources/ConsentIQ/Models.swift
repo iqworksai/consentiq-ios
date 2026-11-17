@@ -81,12 +81,14 @@ public struct BannerConfig: Decodable, Sendable {
     public var cookieIconUrl: String?
     public var overlay: Bool
     public var noticeUrl: String?
+    /// The version of the notice the banner links, which a resent decision carries.
+    public var noticeVersion: Int?
     public var bannerBgColor: String?
     public var bannerTextColor: String?
 
     enum CodingKeys: String, CodingKey {
         case position, layout, theme, showLogo, logoUrl, primaryColor, cornerStyle
-        case showCookieIcon, cookieIconUrl, overlay, noticeUrl, bannerBgColor, bannerTextColor
+        case showCookieIcon, cookieIconUrl, overlay, noticeUrl, noticeVersion, bannerBgColor, bannerTextColor
     }
 
     public init(from decoder: Decoder) throws {
@@ -102,6 +104,7 @@ public struct BannerConfig: Decodable, Sendable {
         cookieIconUrl = try container.decodeIfPresent(String.self, forKey: .cookieIconUrl)
         overlay = try container.decodeIfPresent(Bool.self, forKey: .overlay) ?? false
         noticeUrl = try container.decodeIfPresent(String.self, forKey: .noticeUrl)
+        noticeVersion = try? container.decodeIfPresent(Int.self, forKey: .noticeVersion)
         bannerBgColor = try? container.decodeIfPresent(String.self, forKey: .bannerBgColor)
         bannerTextColor = try? container.decodeIfPresent(String.self, forKey: .bannerTextColor)
     }
@@ -399,6 +402,8 @@ public struct ConsentSubmission: Encodable, Sendable {
     public var identityToken: String?
     /// `.site` for a subject id the app chose, so ConsentIQ keeps it apart from SDK-generated ids.
     public var subjectSource: SubjectSource?
+    /// The notice version a resent decision was made under; ConsentIQ refuses it once the notice changed.
+    public var noticeVersion: Int?
 
     public init(
         propertyKey: String,
@@ -413,7 +418,8 @@ public struct ConsentSubmission: Encodable, Sendable {
         consentVersion: String? = nil,
         captchaToken: String? = nil,
         identityToken: String? = nil,
-        subjectSource: SubjectSource? = nil
+        subjectSource: SubjectSource? = nil,
+        noticeVersion: Int? = nil
     ) {
         self.propertyKey = propertyKey
         self.subjectId = subjectId
@@ -428,6 +434,7 @@ public struct ConsentSubmission: Encodable, Sendable {
         self.captchaToken = captchaToken
         self.identityToken = identityToken
         self.subjectSource = subjectSource
+        self.noticeVersion = noticeVersion
     }
 }
 
