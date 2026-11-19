@@ -35,7 +35,7 @@ public struct ConsentIQAPIClient: Sendable {
 
     public func getConfig() async throws -> PropertyConfig {
         logger.debug("Fetching config for property \(propertyKey)")
-        let config: PropertyConfig = try await request(path: "/api/public/config/\(propertyKey)")
+        let config: PropertyConfig = try await request(path: "/api/public/config/\(Self.segment(propertyKey))")
         logger.debug("Config loaded for property \(config.property.id)")
         return config
     }
@@ -44,7 +44,7 @@ public struct ConsentIQAPIClient: Sendable {
     /// the records ConsentIQ verified; an id this SDK generated is read without one.
     public func getConsent(subjectId: String, identityToken: String? = nil) async throws -> ConsentLookup {
         logger.debug("Fetching consent")
-        let path = "/api/public/consent/\(propertyKey)/\(subjectId)"
+        let path = "/api/public/consent/\(Self.segment(propertyKey))/\(Self.segment(subjectId))"
         let lookup: ConsentLookup
         if let identityToken {
             let body = try JSONEncoder().encode(["identityToken": identityToken])
@@ -78,7 +78,7 @@ public struct ConsentIQAPIClient: Sendable {
     }
 
     public func verifyConsent(consentId: String) async throws -> ConsentVerification {
-        try await request(path: "/api/public/verify/\(consentId)")
+        try await request(path: "/api/public/verify/\(Self.segment(consentId))")
     }
 
     func appAttestChallenge() async throws -> Data {
@@ -117,7 +117,7 @@ public struct ConsentIQAPIClient: Sendable {
     }
 
     private func send(path: String, method: String, body: Data?, headers: [String: String] = [:]) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: apiURL.appendingPathComponent(path))
+        var request = URLRequest(url: try url(for: path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -131,6 +131,27 @@ public struct ConsentIQAPIClient: Sendable {
             throw ConsentIQAPIError(statusCode: 0, message: "Invalid response")
         }
         return (data, http)
+    }
+
+    /// One path segment, percent-encoded. A `/` in an app-chosen subject id stays inside its segment.
+    static func segment(_ value: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
+    // The path arrives already encoded; appendingPathComponent would encode its `%` a second time.
+    private func url(for encodedPath: String) throws -> URL {
+        guard var components = URLComponents(url: apiURL, resolvingAgainstBaseURL: false) else {
+            throw ConsentIQAPIError(statusCode: 0, message: "Invalid API URL")
+        }
+        var base = components.percentEncodedPath
+        if base.hasSuffix("/") { base.removeLast() }
+        components.percentEncodedPath = base + encodedPath
+        guard let url = components.url else {
+            throw ConsentIQAPIError(statusCode: 0, message: "Invalid API URL")
+        }
+        return url
     }
 
     static func errorMessage(from data: Data, status: Int) -> String {

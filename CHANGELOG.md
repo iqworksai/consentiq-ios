@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A subject id containing `/` is looked up as one path segment, as on Android and Flutter.
 - A decision ConsentIQ has not recorded is kept for a later resend on no answer, a `5xx`, `429` or
   an unanswered challenge, not only on `429`, and a newer decision replaces it. A `400`, `403`,
   `404`, `409` or `422`, or any failure on a property that requires a captcha on every submit, drops

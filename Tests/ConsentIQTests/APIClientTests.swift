@@ -60,6 +60,34 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(lookup.consent?.id, "c-1")
     }
 
+    func testGetConsentKeepsEachSubjectIdInOneSegment() async throws {
+        let cases = [
+            ("user/1", "user%2F1"),
+            ("a b", "a%20b"),
+            ("a?b#c", "a%3Fb%23c"),
+            ("a%2Fb", "a%252Fb"),
+            ("ünï", "%C3%BCn%C3%AF"),
+        ]
+        for (subjectId, encoded) in cases {
+            StubURLProtocol.reset()
+            StubURLProtocol.stubFallback(StubResponse(json: Fixtures.savedConsentJSON))
+            _ = try? await client.getConsent(subjectId: subjectId)
+            XCTAssertEqual(StubURLProtocol.requests.first?.url.absoluteString,
+                           "https://consent.example.test/api/public/consent/pk_test_property/\(encoded)", subjectId)
+        }
+    }
+
+    func testRequestsKeepAnAPIURLPathPrefix() async throws {
+        let prefixed = ConsentIQAPIClient(
+            propertyKey: Fixtures.propertyKey,
+            apiURL: URL(string: "https://consent.example.test/eu/")!,
+            session: URLSession(configuration: StubURLProtocol.sessionConfiguration)
+        )
+        StubURLProtocol.stubFallback(StubResponse(json: Fixtures.savedConsentJSON))
+        _ = try? await prefixed.verifyConsent(consentId: "c-1")
+        XCTAssertEqual(StubURLProtocol.requests.first?.url.absoluteString, "https://consent.example.test/eu/api/public/verify/c-1")
+    }
+
     func testGetConsentHitsSubjectURL() async throws {
         StubURLProtocol.stub("GET", Fixtures.consentLookupPath("subj-1"), StubResponse(json: Fixtures.savedConsentJSON))
 
