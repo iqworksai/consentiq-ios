@@ -81,10 +81,14 @@ public struct BannerConfig: Decodable, Sendable {
     public var cookieIconUrl: String?
     public var overlay: Bool
     public var noticeUrl: String?
+    /// The version of the notice the banner links, which a resent decision carries.
+    public var noticeVersion: Int?
+    public var bannerBgColor: String?
+    public var bannerTextColor: String?
 
     enum CodingKeys: String, CodingKey {
         case position, layout, theme, showLogo, logoUrl, primaryColor, cornerStyle
-        case showCookieIcon, cookieIconUrl, overlay, noticeUrl
+        case showCookieIcon, cookieIconUrl, overlay, noticeUrl, noticeVersion, bannerBgColor, bannerTextColor
     }
 
     public init(from decoder: Decoder) throws {
@@ -100,6 +104,9 @@ public struct BannerConfig: Decodable, Sendable {
         cookieIconUrl = try container.decodeIfPresent(String.self, forKey: .cookieIconUrl)
         overlay = try container.decodeIfPresent(Bool.self, forKey: .overlay) ?? false
         noticeUrl = try container.decodeIfPresent(String.self, forKey: .noticeUrl)
+        noticeVersion = try? container.decodeIfPresent(Int.self, forKey: .noticeVersion)
+        bannerBgColor = try? container.decodeIfPresent(String.self, forKey: .bannerBgColor)
+        bannerTextColor = try? container.decodeIfPresent(String.self, forKey: .bannerTextColor)
     }
 
     public func noticeURL(language: String) -> URL? {
@@ -283,6 +290,7 @@ public struct PropertyConfig: Decodable, Sendable {
     public var requireCaptcha: Bool
     public var turnstileSiteKey: String?
     public var autoBlock: Bool
+    public var tcf: TcfSettings?
     public var translations: [String: TranslationSet]
     public var labels: [String: BannerLabels]
     public var rtl: [String]
@@ -290,7 +298,7 @@ public struct PropertyConfig: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case property, banner, categories, marketingChannels, geoRules, resolvedRegulation
         case privacyNotices, formConsentSources, privacyNoticeUrl, requireCaptcha, turnstileSiteKey
-        case autoBlock, translations, labels, rtl
+        case autoBlock, tcf, translations, labels, rtl
     }
 
     public init(from decoder: Decoder) throws {
@@ -307,6 +315,7 @@ public struct PropertyConfig: Decodable, Sendable {
         requireCaptcha = try container.decodeIfPresent(Bool.self, forKey: .requireCaptcha) ?? false
         turnstileSiteKey = try container.decodeIfPresent(String.self, forKey: .turnstileSiteKey)
         autoBlock = try container.decodeIfPresent(Bool.self, forKey: .autoBlock) ?? false
+        tcf = try? container.decodeIfPresent(TcfSettings.self, forKey: .tcf)
         translations = try container.decodeIfPresent([String: TranslationSet].self, forKey: .translations) ?? [:]
         labels = try container.decodeIfPresent([String: BannerLabels].self, forKey: .labels) ?? [:]
         rtl = try container.decodeIfPresent([String].self, forKey: .rtl) ?? []
@@ -389,6 +398,12 @@ public struct ConsentSubmission: Encodable, Sendable {
     public var geoSource: GeoSource?
     public var consentMethod: ConsentMethod
     public var consentVersion: String?
+    public var captchaToken: String?
+    public var identityToken: String?
+    /// `.site` for a subject id the app chose, so ConsentIQ keeps it apart from SDK-generated ids.
+    public var subjectSource: SubjectSource?
+    /// The notice version a resent decision was made under; ConsentIQ refuses it once the notice changed.
+    public var noticeVersion: Int?
 
     public init(
         propertyKey: String,
@@ -400,7 +415,11 @@ public struct ConsentSubmission: Encodable, Sendable {
         geoRegion: String? = nil,
         geoSource: GeoSource? = nil,
         consentMethod: ConsentMethod = .sdk,
-        consentVersion: String? = nil
+        consentVersion: String? = nil,
+        captchaToken: String? = nil,
+        identityToken: String? = nil,
+        subjectSource: SubjectSource? = nil,
+        noticeVersion: Int? = nil
     ) {
         self.propertyKey = propertyKey
         self.subjectId = subjectId
@@ -412,6 +431,26 @@ public struct ConsentSubmission: Encodable, Sendable {
         self.geoSource = geoSource
         self.consentMethod = consentMethod
         self.consentVersion = consentVersion
+        self.captchaToken = captchaToken
+        self.identityToken = identityToken
+        self.subjectSource = subjectSource
+        self.noticeVersion = noticeVersion
+    }
+}
+
+/// Where a subject id came from. Only an app-chosen one is marked; a generated id sends nothing.
+public enum SubjectSource: String, Encodable, Sendable {
+    case site
+}
+
+/// A subject id ConsentIQ refuses. It may not contain ':', which would let it pose as an id of
+/// another kind.
+public struct InvalidSubjectIdError: Error, CustomStringConvertible, Sendable {
+    public let subjectId: String
+    public var description: String { "ConsentIQ subjectId may not contain ':'" }
+
+    static func check(_ subjectId: String) -> InvalidSubjectIdError? {
+        subjectId.contains(":") ? InvalidSubjectIdError(subjectId: subjectId) : nil
     }
 }
 

@@ -1,12 +1,18 @@
 import SwiftUI
 import ConsentIQ
 
+#if DEBUG
+private let debugLogging = true
+#else
+private let debugLogging = false
+#endif
+
 @main
 struct ConsentIQExampleApp: App {
     init() {
         ConsentIQ.shared.configure(ConsentIQConfig(
             propertyKey: "YOUR_IOS_PROPERTY_KEY",
-            debug: true,
+            debug: debugLogging,
             onConsentChange: { consent, marketing in
                 print("Consent changed:", consent, marketing)
             },

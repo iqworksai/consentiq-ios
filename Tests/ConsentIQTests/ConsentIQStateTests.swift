@@ -6,6 +6,7 @@ final class ConsentIQStateTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!
     private var storage: ConsentStorage!
+    private var captcha: FakeCaptchaProvider!
     private var logLines: [String] = []
 
     override func setUp() {
@@ -14,6 +15,7 @@ final class ConsentIQStateTests: XCTestCase {
         suiteName = "ai.iqworks.consentiq.tests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
         storage = ConsentStorage(userDefaults: defaults)
+        captcha = FakeCaptchaProvider()
         logLines = []
     }
 
@@ -23,7 +25,11 @@ final class ConsentIQStateTests: XCTestCase {
     }
 
     private func makeSDK() -> ConsentIQ {
-        let sdk = ConsentIQ(storage: storage, urlSessionConfiguration: StubURLProtocol.sessionConfiguration)
+        let sdk = ConsentIQ(
+            storage: storage,
+            urlSessionConfiguration: StubURLProtocol.sessionConfiguration,
+            captchaProviderFactory: captcha.factory()
+        )
         sdk.logSink = { [weak self] line in self?.logLines.append(line) }
         return sdk
     }
@@ -141,7 +147,7 @@ final class ConsentIQStateTests: XCTestCase {
     func testLocalCacheSkipsSheetWhenServerHasNothing() async {
         stubConfig()
         stubConsentLookup(Fixtures.noConsentJSON)
-        storage.saveConsent(["necessary": false, "analytics": true, "marketing": false])
+        storage.saveConsent(["necessary": false, "analytics": true, "marketing": false], for: storage.getOrCreateSubjectId())
         var opened = 0
         let sdk = makeSDK()
 
@@ -156,7 +162,7 @@ final class ConsentIQStateTests: XCTestCase {
     func testConsentLookupFailureFallsBackToLocalCache() async {
         stubConfig()
         StubURLProtocol.stubFallback(StubResponse(status: 500, json: #"{"error":"Internal server error"}"#))
-        storage.saveConsent(["necessary": true, "analytics": true])
+        storage.saveConsent(["necessary": true, "analytics": true], for: storage.getOrCreateSubjectId())
         let sdk = makeSDK()
 
         await sdk.initialize(config())
@@ -211,14 +217,14 @@ final class ConsentIQStateTests: XCTestCase {
 
     func testProvidedSubjectIdIsUsedAndNotPersisted() async {
         stubConfig()
-        stubConsentLookup(Fixtures.noConsentJSON, subjectId: "user-42")
         let sdk = makeSDK()
 
         await sdk.initialize(config(subjectId: "user-42"))
 
         XCTAssertEqual(sdk.subjectId, "user-42")
         XCTAssertNil(storage.loadSubjectId())
-        XCTAssertEqual(StubURLProtocol.requests.last?.path, Fixtures.consentLookupPath("user-42"))
+        // Without an identity token an app-chosen id is not looked up at all.
+        XCTAssertEqual(StubURLProtocol.requests.last?.path, Fixtures.configPath)
     }
 
     func testNoSubjectIdWhenAutoGenerationIsOff() async {
@@ -409,7 +415,7 @@ final class ConsentIQStateTests: XCTestCase {
         XCTAssertEqual(body["cookieConsents"] as? [String: Bool], sdk.consent)
     }
 
-    func testFailedPostKeepsLocalStateWithoutCacheOrCallback() async {
+    func testFailedPostKeepsTheDecisionLocallyAndPendingWithoutCallback() async throws {
         stubConfig()
         stubConsentLookup(Fixtures.noConsentJSON)
         stubSubmit(status: 500)
@@ -424,7 +430,8 @@ final class ConsentIQStateTests: XCTestCase {
         XCTAssertFalse(sdk.isSheetVisible)
         XCTAssertEqual(accepted, 1)
         XCTAssertEqual(changes, 0)
-        XCTAssertNil(storage.loadConsent())
+        XCTAssertEqual(storage.loadConsent(for: try XCTUnwrap(sdk.subjectId))?["analytics"], true)
+        XCTAssertNotNil(storage.loadPendingDecision())
         XCTAssertTrue(logLines.contains { $0.hasPrefix("[ConsentIQ] Failed to submit consent: Failed to save consent") }, "\(logLines)")
     }
 
@@ -494,33 +501,5 @@ final class ConsentIQStateTests: XCTestCase {
         XCTAssertNotNil(sdk.subjectId)
         XCTAssertNotEqual(sdk.subjectId, original)
         XCTAssertEqual(storage.loadSubjectId(), sdk.subjectId)
-    }
-
-    // MARK: Captcha
-
-    func testCaptchaWarningLogsExactlyOnce() async {
-        stubConfig(Fixtures.configJSON(requireCaptcha: true))
-        stubConsentLookup(Fixtures.noConsentJSON)
-        stubSubmit()
-        let sdk = makeSDK()
-
-        await sdk.initialize(config())
-        await sdk.acceptAll()
-        await sdk.rejectAll()
-
-        let expected = "[ConsentIQ] This property requires a captcha, which mobile SDKs cannot satisfy. "
-            + "Turn off \"Require captcha\" for this property in the ConsentIQ dashboard."
-        XCTAssertEqual(logLines.filter { $0 == expected }.count, 1, "\(logLines)")
-        XCTAssertEqual(StubURLProtocol.requests(matching: "POST", Fixtures.consentPath).count, 2, "submit path is not special-cased")
-    }
-
-    func testNoCaptchaWarningWhenNotRequired() async {
-        stubConfig()
-        stubConsentLookup(Fixtures.noConsentJSON)
-        let sdk = makeSDK()
-
-        await sdk.initialize(config())
-
-        XCTAssertFalse(logLines.contains { $0.contains("requires a captcha") })
     }
 }

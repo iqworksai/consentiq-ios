@@ -19,10 +19,12 @@ struct RecordedRequest {
 struct StubResponse {
     let status: Int
     let body: Data
+    var delay: TimeInterval = 0
 
-    init(status: Int = 200, json: String) {
+    init(status: Int = 200, json: String, delay: TimeInterval = 0) {
         self.status = status
         self.body = Data(json.utf8)
+        self.delay = delay
     }
 
     init(status: Int, data: Data) {
@@ -34,12 +36,14 @@ struct StubResponse {
 final class StubURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var routes: [String: StubResponse] = [:]
+    private static var sequences: [String: [StubResponse]] = [:]
     private static var fallback: StubResponse?
     private static var recorded: [RecordedRequest] = []
 
     static func reset() {
         lock.lock(); defer { lock.unlock() }
         routes = [:]
+        sequences = [:]
         fallback = nil
         recorded = []
     }
@@ -47,6 +51,12 @@ final class StubURLProtocol: URLProtocol {
     static func stub(_ method: String, _ path: String, _ response: StubResponse) {
         lock.lock(); defer { lock.unlock() }
         routes["\(method) \(path)"] = response
+    }
+
+    /// Answers each request in turn; the last response repeats.
+    static func stubSequence(_ method: String, _ path: String, _ responses: [StubResponse]) {
+        lock.lock(); defer { lock.unlock() }
+        sequences["\(method) \(path)"] = responses
     }
 
     static func stubFallback(_ response: StubResponse) {
@@ -84,7 +94,14 @@ final class StubURLProtocol: URLProtocol {
         let response: StubResponse?
         Self.lock.lock()
         Self.recorded.append(recordedRequest)
-        response = Self.routes["\(recordedRequest.method) \(recordedRequest.path)"] ?? Self.fallback
+        let route = "\(recordedRequest.method) \(recordedRequest.path)"
+        if var sequence = Self.sequences[route], let next = sequence.first {
+            if sequence.count > 1 { sequence.removeFirst() }
+            Self.sequences[route] = sequence
+            response = next
+        } else {
+            response = Self.routes[route] ?? Self.fallback
+        }
         Self.lock.unlock()
 
         guard let response else {
@@ -97,9 +114,16 @@ final class StubURLProtocol: URLProtocol {
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]
         )!
-        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: response.body)
-        client?.urlProtocolDidFinishLoading(self)
+        let respond = { [self] in
+            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: response.body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if response.delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + response.delay, execute: respond)
+        } else {
+            respond()
+        }
     }
 
     override func stopLoading() {}

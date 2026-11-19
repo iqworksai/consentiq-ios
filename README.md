@@ -12,14 +12,14 @@ Requires iOS 16.0 or later and Swift 5.9 or later.
 ### Swift Package Manager
 
 In Xcode choose File > Add Package Dependencies, enter
-`https://github.com/iqworksai/consentiq-ios`, and pick "Up to Next Major Version" from `1.0.0`.
+`https://github.com/iqworksai/consentiq-ios`, and pick "Up to Next Major Version" from `1.1.0`.
 Add the `ConsentIQ` library to your app target.
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/iqworksai/consentiq-ios", from: "1.0.0"),
+    .package(url: "https://github.com/iqworksai/consentiq-ios", from: "1.1.0"),
 ],
 targets: [
     .target(name: "YourApp", dependencies: [
@@ -31,7 +31,7 @@ targets: [
 A `ConsentIQ.podspec` is included for teams that vendor pods from git:
 
 ```ruby
-pod 'ConsentIQ', :git => 'https://github.com/iqworksai/consentiq-ios.git', :tag => 'v1.0.0'
+pod 'ConsentIQ', :git => 'https://github.com/iqworksai/consentiq-ios.git', :tag => 'v1.1.0'
 ```
 
 ## Quick start (SwiftUI)
@@ -136,11 +136,13 @@ of the same app use the iOS key.
 | --- | --- | --- |
 | `propertyKey` | required | The property's public key from the dashboard |
 | `apiURL` | `https://consent.iqworks.ai` | ConsentIQ base URL |
-| `subjectId` | `nil` | Supply your own pseudonymous id instead of a generated one |
+| `subjectId` | `nil` | Supply your own id instead of a generated one. It must be random and unguessable, never an account number, email address or phone number: the consent lookup needs only the property key, which ships in your app. It may not contain `:`; such an id is refused with `InvalidSubjectIdError` through `onError`. The SDK marks your id as yours (`subjectSource: "site"`), so ConsentIQ keeps it apart from generated ids. Its stored consent is restored only with `identityToken`; without one the SDK relies on the copy on the device |
 | `autoGenerateSubjectId` | `true` | Generate and persist a UUID when `subjectId` is nil |
 | `language` | `nil` | Override the property's default language, for example `"ar-EG"` |
 | `autoShow` | `true` | Show the sheet on launch when no consent exists |
-| `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq` |
+| `debug` | `false` | Verbose logging under subsystem `ai.iqworks.consentiq`. Turn it on in debug builds only |
+| `identityToken` | `nil` | Your server's signature for this person, sent with every submission for the `subjectId` you supply (never with a generated id, which it cannot match). ConsentIQ verifies it and marks the record verified by your organization. Sign on your server, never in the app |
+| `onError` | `nil` | Called when the SDK recovers from a failure: a TCF screen that could not load or answer, a decision ConsentIQ refused for good (`400`, `403`, `404`, `409`, `422`, or any failure on a property that requires a captcha on every submit), or a restore refused with `403` |
 
 `ConsentIQ` (`@MainActor`, `ObservableObject`, use `ConsentIQ.shared`)
 
@@ -149,19 +151,34 @@ of the same app use the iOS key.
 | `consent`, `marketingConsent` | Published maps of category and channel to `Bool`; `necessary` is always `true` |
 | `config` | Published `PropertyConfig` once loaded |
 | `isLoading`, `isSheetVisible`, `language`, `regulation` | Published state; `regulation` is the server-resolved regime or `nil` |
+| `isTcfActive` | Published; `true` while the property's IAB TCF screens replace the native sheet |
 | `configure(_:)` | Starts initialization in a task; `initialize(_:)` is the awaitable form |
 | `hasConsent(_:)`, `hasMarketingConsent(_:)` | Query a category or channel |
 | `acceptAll()`, `rejectAll()`, `savePreferences(_:)` | The sheet's three outcomes; each also has an `async` form |
 | `updateConsent(_:)`, `updateMarketingConsent(_:)` | Merge a partial map and record it |
 | `showSheet()`, `hideSheet()`, `dismissSheet()` | Open, close silently, or close as a visitor back-out |
-| `resetConsent()` | Clear the local cache and subject id and return to defaults |
-| `presentSheet(from:)` | UIKit presentation of the same sheet |
+| `showPrivacyChoices()` | Open the visitor's choices: the TCF screens when TCF is active, otherwise the sheet |
+| `resetConsent()` | Clear the local cache, any decision waiting to be resent, and the subject id, and return to defaults |
+| `presentSheet(from:)`, `presentPrivacyChoices(from:)` | UIKit presentation of the same choices |
 
-Every write updates local state first, posts to ConsentIQ, persists the cache, then calls
-`onConsentChange`. A failed post is logged and local state is kept.
+Every write updates local state and the local copy first, then posts to ConsentIQ, and calls
+`onConsentChange` once it is recorded. The local copy belongs to the subject id it was written for;
+another subject never inherits it. When the post gets no answer, a `5xx`, `429 Too many requests` or
+a challenge left unanswered, the decision is kept and sent once more on each of the next launches,
+without a captcha, until it is recorded, three attempts have been made, seven days have passed, or
+the banner's notice or categories changed. It carries the notice version it was made under. A `400`,
+`403`, `404`, `409` or `422` answer, or any failure on a property that requires a captcha on every
+submit, is final: the decision and its local copy are dropped, `onError` is called, and the next
+launch asks again with nothing granted rather than restoring an older choice. A decision is resent
+only for the same subject id, property and API URL, a newer decision replaces it, and a newer
+record on ConsentIQ for that person wins over it. A restore refused with `403` drops the local copy
+too, calls `onError`, and shows the sheet.
 
 `FormConsent` mirrors the marketing consent form helper: `toggle(_:)`, `set(_:_:)`, `submit()`
-(posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`.
+(posts `marketingConsents` with `subjectType: user` and `consentMethod: form`) and `reset()`. Set
+its `identityToken` to send your server's signature with the form, and `identityFor` to the
+identifier it was signed for: when the subject id is that identifier written differently (an
+email's case, a phone's spacing) the signed form is sent, and any other subject goes unsigned.
 Build one with `FormConsent(consentIQ: .shared)` after initialization, or with an explicit
 `propertyKey` and `subjectId`.
 
@@ -180,18 +197,63 @@ All callbacks are optional fields on `ConsentIQConfig` and run on the main actor
 | `onReject(outcome)` | Reject all |
 | `onSave(outcome)` | Save from the category list |
 | `onClose()` | The visitor swiped the sheet away without choosing; never after accept, reject, save or `hideSheet()` |
+| `onError(error)` | A TCF screen failed (`TcfError`, with a `code`); the native sheet is used instead |
+
+## IAB TCF
+
+When a property has IAB TCF turned on in the dashboard, the SDK follows the IAB in-app spec:
+
+- At start-up it writes `IABTCF_CmpSdkID` and `IABTCF_CmpSdkVersion` to `UserDefaults.standard`.
+  Where GDPR does not apply to the visitor it writes `IABTCF_gdprApplies = 0` and uses the native
+  sheet as usual.
+- Otherwise it loads ConsentIQ's TCF screens from consent.iqworks.ai in a hidden web view. If the
+  stored decision still stands, nothing is shown. If the visitor must choose, the screens are
+  presented full-screen over your app; you do not need to present anything yourself.
+- A decision writes every `IABTCF_*` key to `UserDefaults.standard`, removes publisher restriction
+  keys that no longer apply, updates `consent` and calls `onAccept`, `onReject` or `onSave`, then
+  `onConsentChange`. ConsentIQ has already recorded the consent, so it is not sent again.
+- Call `showPrivacyChoices()` (or `presentPrivacyChoices(from:)` in UIKit) from your privacy
+  settings to reopen the screens. A reopened screen has its own close button, which reports
+  `onClose`.
+- With `autoShow: false` the screens open only when you call `showPrivacyChoices()`.
+- If the screens cannot load within 15 seconds, or answer within 45 seconds of starting, the SDK
+  calls `onError` and shows the native sheet. The next `showPrivacyChoices()` tries the TCF screens
+  again. A choice made in that native sheet removes the TCF decision keys the SDK wrote, so an older
+  TC string never outlives it.
+- If another CMP's `IABTCF_CmpSdkID` is already on the device, the SDK leaves its keys alone until
+  the visitor makes a choice in ConsentIQ's screens.
+
+`resetConsent()`, or consent the server reports as expired, removes the TCF decision keys the SDK
+wrote, so vendor SDKs stop reading the old choices. `IABTCF_CmpSdkID`, `IABTCF_CmpSdkVersion` and
+`IABTCF_gdprApplies` stay, and keys another CMP wrote are left alone. If the property later turns
+TCF off, the next start-up removes every `IABTCF_*` key the SDK wrote, `IABTCF_CmpSdkID` included.
+
+The `IABTCF_*` keys always go to `UserDefaults.standard`, even when you pass `ConsentStorage` a
+different suite, because that is where vendor SDKs read them.
 
 ## Limitations
 
-**Captcha.** If "Require captcha" is turned on for the property, every consent submission from
-this SDK is refused with HTTP 400, because Cloudflare Turnstile has no native mobile SDK. The SDK
-logs this once at startup:
+**Captcha.** If "Require CAPTCHA" is turned on for the property, the SDK runs Cloudflare
+Turnstile before each submission, in a web view that loads from consent.iqworks.ai and
+challenges.cloudflare.com. ConsentIQ may also ask for a captcha on any property when a submission
+looks automated; the SDK then solves one and sends the submission once more. The check runs
+invisibly. If it has not finished within a few seconds, it is shown over your app with a Cancel
+button, so a visitor Cloudflare wants to click can do so. Nothing is loaded until the first
+submission that needs it. If the check fails, times out, or is cancelled, the submission is not
+sent, local state is kept (`FormConsent.submit()` returns `nil`), and the SDK logs:
 
 ```
-[ConsentIQ] This property requires a captcha, which mobile SDKs cannot satisfy. Turn off "Require captcha" for this property in the ConsentIQ dashboard.
+[ConsentIQ] Captcha check failed; consent not submitted
 ```
 
-Turn the setting off for your iOS property.
+List Cloudflare Turnstile in your app's privacy disclosures.
+
+**App Attest.** Each submission proves it comes from your app with Apple's App Attest: once per
+install the SDK generates a key and registers it with ConsentIQ, then signs each submission's body.
+Enter your Team ID and bundle ID in the property's settings, and add the App Attest capability to
+your app target (entitlement `com.apple.developer.devicecheck.appattest-environment`, `production`
+for App Store builds). Where App Attest is unavailable, such as the simulator, nothing is signed
+and ConsentIQ asks for the captcha above instead.
 
 **Geo.** The applicable regulation is resolved on the server from the request's network location.
 The SDK does not send device location.

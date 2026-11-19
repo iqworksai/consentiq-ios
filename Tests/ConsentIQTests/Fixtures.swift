@@ -4,6 +4,7 @@ import Foundation
 enum Fixtures {
     static let propertyKey = "pk_test_property"
     static let apiURL = URL(string: "https://consent.example.test")!
+    static let turnstileSiteKey = "1x00000000000000000000AA"
 
     static let configPath = "/api/public/config/\(propertyKey)"
     static let consentPath = "/api/public/consent"
@@ -14,11 +15,16 @@ enum Fixtures {
 
     static func configJSON(
         requireCaptcha: Bool = false,
+        turnstileSiteKey: String? = nil,
         defaultLanguage: String? = "en",
-        resolvedRegulation: String? = "DPDPA"
+        resolvedRegulation: String? = "DPDPA",
+        tcf: String? = nil,
+        noticeVersion: Int? = nil
     ) -> String {
         let language = defaultLanguage.map { "\"\($0)\"" } ?? "null"
         let regulation = resolvedRegulation.map { "\"\($0)\"" } ?? "null"
+        let siteKey = turnstileSiteKey.map { "\"\($0)\"" } ?? "null"
+        let tcfBlock = tcf.map { "\"tcf\": \($0)," } ?? ""
         return """
         {
           "property": {
@@ -28,7 +34,7 @@ enum Fixtures {
           "banner": {
             "position": "bottom", "layout": "banner", "theme": "dark", "showLogo": false,
             "primaryColor": "#112233", "cornerStyle": "rounded", "showCookieIcon": false, "overlay": false,
-            "noticeUrl": "https://consent.example.test/api/public/privacy/\(propertyKey)?notice=n-1"
+            "noticeUrl": "https://consent.example.test/api/public/privacy/\(propertyKey)?notice=n-1"\(noticeVersion.map { ", \"noticeVersion\": \($0)" } ?? "")
           },
           "categories": [
             { "code": "necessary", "enabled": true, "defaultState": true, "name": "Necessary", "isRequired": true },
@@ -50,8 +56,9 @@ enum Fixtures {
           ],
           "privacyNoticeUrl": "/api/public/privacy/\(propertyKey)",
           "requireCaptcha": \(requireCaptcha),
-          "turnstileSiteKey": null,
+          "turnstileSiteKey": \(siteKey),
           "autoBlock": false,
+          \(tcfBlock)
           "translations": {
             "en": {
               "bannerDescription": "We use cookies.",
@@ -91,6 +98,40 @@ enum Fixtures {
       }
     }
     """
+
+    static func tcfJSON(cmpId: Int = 300, gdprApplies: Bool = true, enabled: Bool = true) -> String {
+        """
+        {
+          "enabled": \(enabled), "gdprApplies": \(gdprApplies), "vendorIds": [1, 755],
+          "publisherCountryCode": "DE",
+          "publisherRestrictions": [ { "purposeId": 2, "restrictionType": 1, "vendorIds": [755] } ],
+          "repromptMonths": 6, "tcfPolicyVersion": 5, "cmpId": \(cmpId), "cmpVersion": 1,
+          "vendorListUrl": "https://consent.example.test/api/public/tcf/\(propertyKey)/vendor-list",
+          "futureField": [1, 2]
+        }
+        """
+    }
+
+    static func tcfDecisionJSON(scope: String?, consent: String) -> String {
+        let scopeField = scope.map { ", \"scope\": \"\($0)\"" } ?? ""
+        return #"{"type":"decision","tcString":"CQ-s","keys":{"IABTCF_gdprApplies":1},"consent":\#(consent)\#(scopeField)}"#
+    }
+
+    static let tcfDecisionJSON = """
+    {
+      "type": "decision",
+      "tcString": "CQ-test",
+      "keys": {
+        "IABTCF_CmpSdkID": 300, "IABTCF_CmpSdkVersion": 1, "IABTCF_PolicyVersion": 5, "IABTCF_gdprApplies": 1,
+        "IABTCF_PublisherCC": "DE", "IABTCF_PurposeOneTreatment": 0, "IABTCF_TCString": "CQ-test",
+        "IABTCF_PurposeConsents": "1101", "IABTCF_PublisherRestrictions2": "_1"
+      },
+      "stored": { "tcString": "CQ-test", "vendorIds": [1, 755], "restrictionsKey": "2:1:755" },
+      "consent": { "necessary": true, "analytics": true, "marketing": false }
+    }
+    """
+
+    static let captchaConfigJSON = configJSON(requireCaptcha: true, turnstileSiteKey: turnstileSiteKey)
 
     static let noConsentJSON = #"{"consent":null}"#
     static let expiredConsentJSON = #"{"consent":null,"expired":true}"#

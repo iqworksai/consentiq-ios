@@ -10,12 +10,15 @@ public struct ConsentIQConfig {
     public var language: String?
     public var autoShow: Bool
     public var debug: Bool
+    /// Your server's signature for this person, sent with every submit unread.
+    public var identityToken: String?
     public var onConsentChange: ((ConsentState, MarketingConsentState) -> Void)?
     public var onOpen: (() -> Void)?
     public var onAccept: ((ConsentOutcome) -> Void)?
     public var onReject: ((ConsentOutcome) -> Void)?
     public var onSave: ((ConsentOutcome) -> Void)?
     public var onClose: (() -> Void)?
+    public var onError: ((Error) -> Void)?
 
     public init(
         propertyKey: String,
@@ -25,12 +28,14 @@ public struct ConsentIQConfig {
         language: String? = nil,
         autoShow: Bool = true,
         debug: Bool = false,
+        identityToken: String? = nil,
         onConsentChange: ((ConsentState, MarketingConsentState) -> Void)? = nil,
         onOpen: (() -> Void)? = nil,
         onAccept: ((ConsentOutcome) -> Void)? = nil,
         onReject: ((ConsentOutcome) -> Void)? = nil,
         onSave: ((ConsentOutcome) -> Void)? = nil,
-        onClose: (() -> Void)? = nil
+        onClose: (() -> Void)? = nil,
+        onError: ((Error) -> Void)? = nil
     ) {
         self.propertyKey = propertyKey
         self.apiURL = apiURL
@@ -39,11 +44,13 @@ public struct ConsentIQConfig {
         self.language = language
         self.autoShow = autoShow
         self.debug = debug
+        self.identityToken = identityToken
         self.onConsentChange = onConsentChange
         self.onOpen = onOpen
         self.onAccept = onAccept
         self.onReject = onReject
         self.onSave = onSave
         self.onClose = onClose
+        self.onError = onError
     }
 }
